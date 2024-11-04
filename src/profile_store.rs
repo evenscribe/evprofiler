@@ -9,6 +9,7 @@ struct ProfileStore {}
 
 #[tonic::async_trait]
 impl ProfileStoreService for ProfileStore {
+    /// WriteRaw accepts a raw set of bytes of a pprof file
     async fn write_raw(
         &self,
         request: Request<WriteRawRequest>,
