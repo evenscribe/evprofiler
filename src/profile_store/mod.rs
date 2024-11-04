@@ -1,11 +1,18 @@
+mod normalizer;
+mod profile;
+
 use crate::profilestorepb::profile_store_service_server::ProfileStoreService;
 use crate::profilestorepb::{WriteRawRequest, WriteRawResponse, WriteRequest, WriteResponse};
+use normalizer::NormalizedWriteRawRequest;
+use std::collections::{HashMap, HashSet};
 use std::{pin::Pin, result::Result};
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status, Streaming};
 
 #[derive(Debug, Default)]
 pub struct ProfileStore {}
+
+impl ProfileStore {}
 
 #[tonic::async_trait]
 impl ProfileStoreService for ProfileStore {
@@ -14,10 +21,10 @@ impl ProfileStoreService for ProfileStore {
         &self,
         request: Request<WriteRawRequest>,
     ) -> Result<Response<WriteRawResponse>, Status> {
+        let normalized_request = NormalizedWriteRawRequest::try_from(&request.into_inner())?;
         log::info!(
-            "Received ProfileStoreService::write_raw request \n Series: {:?} \n Normalized: {:?}",
-            request.get_ref().series,
-            request.get_ref().normalized
+            "Received ProfileStoreService::write_raw request \n Request: {:?}",
+            normalized_request
         );
         return Ok(Response::new(WriteRawResponse {}));
     }

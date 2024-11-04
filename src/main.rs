@@ -11,6 +11,10 @@ pub(crate) mod profilestorepb {
     tonic::include_proto!("parca.profilestore.v1alpha1");
 }
 
+pub(crate) mod metapb {
+    tonic::include_proto!("parca.metastore.v1alpha1");
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     colog::init();
