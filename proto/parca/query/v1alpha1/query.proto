@@ -1,0 +1,703 @@
+syntax = "proto3";
+
+package parca.query.v1alpha1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "parca/metastore/v1alpha1/metastore.proto";
+import "parca/profilestore/v1alpha1/profilestore.proto";
+
+option go_package = "github.com/parca-dev/parca/gen/go/query";
+
+// QueryService is the service that provides APIs to retrieve and inspect profiles
+service QueryService {
+  // QueryRange performs a profile query over a time range
+  rpc QueryRange(QueryRangeRequest) returns (QueryRangeResponse) {
+    option (google.api.http) = {get: "/profiles/query_range"};
+  }
+
+  // Query performs a profile query
+  rpc Query(QueryRequest) returns (QueryResponse) {
+    option (google.api.http) = {get: "/profiles/query"};
+  }
+
+  // Series is unimplemented
+  rpc Series(SeriesRequest) returns (SeriesResponse) {
+    option (google.api.http) = {get: "/profiles/series"};
+  }
+
+  // ProfileTypes returns the list of available profile types.
+  rpc ProfileTypes(ProfileTypesRequest) returns (ProfileTypesResponse) {
+    option (google.api.http) = {get: "/profiles/types"};
+  }
+
+  // Labels returns the set of label names against a given matching string and time frame
+  rpc Labels(LabelsRequest) returns (LabelsResponse) {
+    option (google.api.http) = {get: "/profiles/labels"};
+  }
+
+  // Values returns the set of values that match a given label and time frame
+  rpc Values(ValuesRequest) returns (ValuesResponse) {
+    option (google.api.http) = {get: "/profiles/labels/{label_name}/values"};
+  }
+
+  // ShareProfile uploads the given profile to pprof.me and returns a link to the profile.
+  rpc ShareProfile(ShareProfileRequest) returns (ShareProfileResponse) {
+    option (google.api.http) = {
+      post: "/profiles/share"
+      body: "*"
+    };
+  }
+}
+
+// ProfileTypesRequest is the request to retrieve the list of available profile types.
+message ProfileTypesRequest {}
+
+// ProfileTypesResponse is the response to retrieve the list of available profile types.
+message ProfileTypesResponse {
+  // types is the list of available profile types.
+  repeated ProfileType types = 1;
+}
+
+// ProfileType is the type of a profile as well as the units the profile type is available in.
+message ProfileType {
+  // name is the name of the profile type.
+  string name = 1;
+  // sample_type is the type of the samples in the profile.
+  string sample_type = 2;
+  // sample_unit is the unit of the samples in the profile.
+  string sample_unit = 3;
+  // period_type is the type of the periods in the profile.
+  string period_type = 4;
+  // period_unit is the unit of the periods in the profile.
+  string period_unit = 5;
+  // delta describes whether the profile is a delta profile.
+  bool delta = 6;
+}
+
+// QueryRangeRequest is the request for a set of profiles matching a query over a time window
+message QueryRangeRequest {
+  // query is the query string to match profiles against
+  string query = 1;
+
+  // start is the start of the query time window
+  google.protobuf.Timestamp start = 2;
+
+  // end is the end of the query time window
+  google.protobuf.Timestamp end = 3;
+
+  // limit is the max number of profiles to include in the response
+  uint32 limit = 4;
+
+  // step is the duration of each sample returned.
+  google.protobuf.Duration step = 5;
+
+  // sum_by is the set of labels to sum by
+  repeated string sum_by = 6;
+}
+
+// QueryRangeResponse is the set of matching profile values
+message QueryRangeResponse {
+  // series is the set of metrics series that satisfy the query range request
+  repeated MetricsSeries series = 1;
+}
+
+// MetricsSeries is a set of labels and corresponding sample values
+message MetricsSeries {
+  // labelset is the set of key value pairs
+  parca.profilestore.v1alpha1.LabelSet labelset = 1;
+
+  // samples is the set of top-level cumulative values of the corresponding profiles
+  repeated MetricsSample samples = 2;
+
+  // period_type is the value type of profile period
+  ValueType period_type = 3;
+
+  // sample_type is the value type of profile sample
+  ValueType sample_type = 4;
+}
+
+// MetricsSample is a cumulative value and timestamp of a profile
+message MetricsSample {
+  // timestamp is the time the profile was ingested
+  google.protobuf.Timestamp timestamp = 1;
+
+  // value is the cumulative value for the profile
+  int64 value = 2;
+
+  // value_per_second is the calculated per second average in the steps duration
+  double value_per_second = 3;
+
+  // duration is the normalized aggregated duration the metric samples has been observed over.
+  int64 duration = 4;
+}
+
+// MergeProfile contains parameters for a merge request
+message MergeProfile {
+  // query is the query string to match profiles for merge
+  string query = 1;
+
+  // start is the beginning of the evaluation time window
+  google.protobuf.Timestamp start = 2;
+
+  // end is the end of the evaluation time window
+  google.protobuf.Timestamp end = 3;
+}
+
+// SingleProfile contains parameters for a single profile query request
+message SingleProfile {
+  // time is the point in time to perform the profile request
+  google.protobuf.Timestamp time = 1;
+
+  // query is the query string to retrieve the profile
+  string query = 2;
+}
+
+// DiffProfile contains parameters for a profile diff request
+message DiffProfile {
+  // a is the first profile to diff
+  ProfileDiffSelection a = 1;
+
+  // b is the second profile to diff
+  ProfileDiffSelection b = 2;
+
+  // absolute diffing, by default comparisons are relative
+  optional bool absolute = 3;
+}
+
+// ProfileDiffSelection contains the parameters of a diff selection
+message ProfileDiffSelection {
+  // Mode specifies the type of diff
+  enum Mode {
+    // MODE_SINGLE_UNSPECIFIED default unspecified
+    MODE_SINGLE_UNSPECIFIED = 0;
+
+    // MODE_MERGE merge profile
+    MODE_MERGE = 1;
+  }
+
+  // mode is the selection of the diff mode
+  Mode mode = 1;
+
+  // options are the available options for a diff selection
+  oneof options {
+    // merge contains options for a merge request
+    MergeProfile merge = 2;
+
+    // single contains options for a single profile request
+    SingleProfile single = 3;
+  }
+}
+
+// QueryRequest is a request for a profile query
+message QueryRequest {
+  // Mode is the type of query request
+  enum Mode {
+    // MODE_SINGLE_UNSPECIFIED query unspecified
+    MODE_SINGLE_UNSPECIFIED = 0;
+
+    // MODE_DIFF is a diff query
+    MODE_DIFF = 1;
+
+    // MODE_MERGE is a merge query
+    MODE_MERGE = 2;
+  }
+
+  // mode indicates the type of query performed
+  Mode mode = 1;
+
+  // options are the options corresponding to the mode
+  oneof options {
+    // diff contains the diff query options
+    DiffProfile diff = 2;
+
+    // merge contains the merge query options
+    MergeProfile merge = 3;
+
+    // single contains the single query options
+    SingleProfile single = 4;
+  }
+
+  // ReportType is the type of report to return
+  enum ReportType {
+    // REPORT_TYPE_FLAMEGRAPH_UNSPECIFIED unspecified
+    REPORT_TYPE_FLAMEGRAPH_UNSPECIFIED = 0 [deprecated = true];
+
+    // REPORT_TYPE_PPROF unspecified
+    REPORT_TYPE_PPROF = 1;
+
+    // REPORT_TYPE_TOP unspecified
+    REPORT_TYPE_TOP = 2;
+
+    // REPORT_TYPE_CALLGRAPH unspecified
+    REPORT_TYPE_CALLGRAPH = 3;
+
+    // REPORT_TYPE_FLAMEGRAPH_TABLE unspecified
+    REPORT_TYPE_FLAMEGRAPH_TABLE = 4;
+
+    // REPORT_TYPE_FLAMEGRAPH_ARROW unspecified
+    REPORT_TYPE_FLAMEGRAPH_ARROW = 5;
+
+    // REPORT_TYPE_SOURCE contains source code annotated with profiling information
+    REPORT_TYPE_SOURCE = 6;
+
+    // REPORT_TYPE_TABLE_ARROW unspecified
+    REPORT_TYPE_TABLE_ARROW = 7;
+
+    // REPORT_TYPE_PROFILE_METADATA contains metadata about the profile i.e. binaries, labels
+    REPORT_TYPE_PROFILE_METADATA = 8;
+  }
+
+  // report_type is the type of report to return
+  ReportType report_type = 5;
+
+  // filter_query is the query string to filter the profile samples
+  optional string filter_query = 6 [deprecated = true];
+
+  // node_trim_threshold is the threshold % where the nodes with Value less than this will be removed from the report
+  optional float node_trim_threshold = 7;
+
+  // group_by indicates the fields to group by
+  optional GroupBy group_by = 8;
+
+  // source information about the source requested, required if source report is requested
+  optional SourceReference source_reference = 9;
+
+  // which runtime frames to filter out, often interpreter frames like python or ruby are not super useful by default
+  optional RuntimeFilter runtime_filter = 10 [deprecated = true];
+
+  // invert_call_stack inverts the call stacks in the flamegraph
+  optional bool invert_call_stack = 11;
+
+  // a set of filter to apply to the query request
+  repeated Filter filter = 12;
+}
+
+// Filter to apply to the query request
+message Filter {
+  // filter is a oneof type of filter to apply to the query request
+  oneof filter {
+    // stack_filter is a filter for filtering by stacks
+    StackFilter stack_filter = 1;
+
+    // frame_filter is a filter for filtering by frames
+    FrameFilter frame_filter = 2;
+  }
+}
+
+// StackFilter is a filter for filtering by stacks
+message StackFilter {
+  // filter contains the different methods in which you can filter a stack
+  oneof filter {
+    // function_name_stack_filter is the function name to filter by
+    FunctionNameStackFilter function_name_stack_filter = 1;
+  }
+}
+
+// FunctionNameStackFilter is a filter for filtering by function name
+message FunctionNameStackFilter {
+  // function_to_filter is the function name to filter by
+  string function_to_filter = 1;
+}
+
+// FrameFilter is a filter for filtering by frames
+message FrameFilter {
+  // filter contains the different methods in which you can filter a frame
+  oneof filter {
+    // binary_frame_filter is the list of binary names to filter by
+    BinaryFrameFilter binary_frame_filter = 1;
+  }
+}
+
+// BinaryFrameFilter is a filter for filtering by binaries
+message BinaryFrameFilter {
+  // include_binaries is the list of binaries to filter by
+  repeated string include_binaries = 1;
+}
+
+// RuntimeFilter configures which runtimes to filter frames out for.
+message RuntimeFilter {
+  // Whether to show frames of the python runtime.
+  bool show_python = 1;
+  // Whether to show frames of the ruby runtime.
+  bool show_ruby = 2;
+  // Whether to only show interpreted frames.
+  bool show_interpreted_only = 3;
+}
+
+// SourceReference contains a reference to source code.
+message SourceReference {
+  // The build ID to request the source of.
+  string build_id = 1;
+  // The filename requested.
+  string filename = 2;
+  // Whether to perform a full query or just retrieve the source.
+  bool source_only = 3;
+}
+
+// GroupBy encapsulates the repeated fields to group by
+message GroupBy {
+  // the names of the fields to group by.
+  // special fields are the ones prefixed with "labels." which are grouping by pprof labels.
+  repeated string fields = 1;
+}
+
+// Top is the top report type
+message Top {
+  // list are the list of ordered elements of the table
+  repeated TopNode list = 1;
+
+  // reported is the number of lines reported
+  int32 reported = 2;
+
+  // total is the number of lines that exist in the report
+  // Use total from the top level query response instead.
+  int32 total = 3 [deprecated = true];
+
+  // unit is the unit represented by top table
+  string unit = 4;
+}
+
+// TopNode is a node entry in a top list
+message TopNode {
+  // meta is the metadata about the node
+  TopNodeMeta meta = 1;
+
+  // cumulative is the cumulative value of the node
+  int64 cumulative = 2;
+
+  // flat is the flat value of the node
+  int64 flat = 3;
+
+  // diff is the diff value between two profiles
+  int64 diff = 4;
+}
+
+// TopNodeMeta is the metadata for a given node
+message TopNodeMeta {
+  // location is the location for the code
+  parca.metastore.v1alpha1.Location location = 1;
+
+  // mapping is the mapping into code
+  parca.metastore.v1alpha1.Mapping mapping = 2;
+
+  // function is the function information
+  parca.metastore.v1alpha1.Function function = 3;
+
+  // line is the line location
+  parca.metastore.v1alpha1.Line line = 4;
+}
+
+// Flamegraph is the flame graph report type
+message Flamegraph {
+  // root is the root of the flame graph
+  FlamegraphRootNode root = 1;
+
+  // total is the total weight of the flame graph
+  // Use total from the top level query response instead.
+  int64 total = 2 [deprecated = true];
+
+  // unit is the unit represented by the flame graph
+  string unit = 3;
+
+  // height is the max height of the graph
+  int32 height = 4;
+
+  // string_table holds all deduplicated strings used in the meta data.
+  repeated string string_table = 5;
+
+  // locations deduplicated by their ID to be referenced by nodes.
+  repeated parca.metastore.v1alpha1.Location locations = 6;
+
+  // mapping deduplicated by their ID to be referenced by nodes.
+  repeated parca.metastore.v1alpha1.Mapping mapping = 7;
+
+  // function deduplicated by their ID to be referenced by nodes.
+  repeated parca.metastore.v1alpha1.Function function = 8;
+
+  // untrimmed_total is the total weight of the flame graph before trimming.
+  // Use trimmed instead.
+  int64 untrimmed_total = 9 [deprecated = true];
+
+  // trimmed is the amount of cumulative value trimmed from the flame graph.
+  int64 trimmed = 10;
+}
+
+// Flamegraph is the flame graph report type
+message FlamegraphArrow {
+  // record is the arrow record containing the actual flamegraph data
+  bytes record = 1;
+
+  // unit is the unit represented by the flame graph
+  string unit = 2;
+
+  // height is the max height of the graph
+  int32 height = 3;
+
+  // trimmed is the amount of cumulative value trimmed from the flame graph.
+  int64 trimmed = 4;
+}
+
+// Source is the result of the source report type.
+message Source {
+  // An arrow record that contains a row per source code line with value and diff columns for flat and cumulative.
+  bytes record = 1;
+  // The actual source file content.
+  string source = 2;
+  // The unit of the values in the record.
+  string unit = 3;
+}
+
+// FlamegraphRootNode is a root node of a flame graph
+message FlamegraphRootNode {
+  // cumulative is the cumulative value of the graph
+  int64 cumulative = 1;
+
+  // diff is the diff
+  int64 diff = 2;
+
+  // children are the list of the children of the root node
+  repeated FlamegraphNode children = 3;
+}
+
+// FlamegraphNode represents a node in the graph
+message FlamegraphNode {
+  // meta is the metadata about the node
+  FlamegraphNodeMeta meta = 1;
+
+  // cumulative is the cumulative value of the node
+  int64 cumulative = 2;
+
+  // diff is the diff
+  int64 diff = 3;
+
+  // children are the child nodes
+  repeated FlamegraphNode children = 4;
+}
+
+// FlamegraphNodeMeta is the metadata for a given node
+message FlamegraphNodeMeta {
+  // location is the location for the code
+  parca.metastore.v1alpha1.Location location = 1;
+
+  // mapping is the mapping into code
+  parca.metastore.v1alpha1.Mapping mapping = 2;
+
+  // function is the function information
+  parca.metastore.v1alpha1.Function function = 3;
+
+  // line is the line location
+  parca.metastore.v1alpha1.Line line = 4;
+
+  // location_index has the index to the deduplicated location in the location table.
+  uint32 location_index = 5;
+
+  // line_index is the line index within the referenced location.
+  uint32 line_index = 6;
+}
+
+// CallgraphNode represents a node in the graph
+message CallgraphNode {
+  // id is the unique id of the node
+  string id = 1;
+
+  // meta is the metadata about the node
+  CallgraphNodeMeta meta = 2;
+
+  // cumulative is the cumulative value of the node
+  int64 cumulative = 3;
+
+  // flat is the flat value of the node
+  int64 flat = 4;
+}
+
+// TopNodeMeta is the metadata for a given node
+message CallgraphNodeMeta {
+  // location is the location for the code
+  parca.metastore.v1alpha1.Location location = 1;
+
+  // mapping is the mapping into code
+  parca.metastore.v1alpha1.Mapping mapping = 2;
+
+  // function is the function information
+  parca.metastore.v1alpha1.Function function = 3;
+
+  // line is the line location
+  parca.metastore.v1alpha1.Line line = 4;
+}
+
+// CallgraphEdge represents an edge in the graph
+message CallgraphEdge {
+  // id is the unique id of the edge
+  string id = 1;
+
+  // source represents the id of the source node
+  string source = 2;
+
+  // target represents the id of the target node
+  string target = 3;
+
+  // cumulative is the cumulative value of the edge
+  int64 cumulative = 4;
+
+  // is_collapsed indicates if the edge is collapsed
+  bool is_collapsed = 5;
+}
+
+// Callgraph is the callgraph report type
+message Callgraph {
+  // nodes are the nodes in the callgraph
+  repeated CallgraphNode nodes = 1;
+
+  // edges are the edges connecting nodes in the callgraph
+  repeated CallgraphEdge edges = 2;
+
+  // cumulative is the total cumulative value of the callgraph
+  // Use total from the top level query response instead.
+  int64 cumulative = 3 [deprecated = true];
+}
+
+// QueryResponse is the returned report for the given query
+message QueryResponse {
+  // report is the generated report
+  oneof report {
+    // flamegraph is a flamegraph representation of the report
+    Flamegraph flamegraph = 5;
+
+    // pprof is a pprof profile as compressed bytes
+    bytes pprof = 6;
+
+    // top is a top list representation of the report
+    Top top = 7;
+
+    // callgraph is a callgraph nodes and edges representation of the report
+    Callgraph callgraph = 8;
+
+    // flamegraph_arrow is a flamegraph encoded as a arrow record
+    FlamegraphArrow flamegraph_arrow = 11;
+
+    // source is the source report type result
+    Source source = 12;
+
+    // table_arrow is a table encoded as a arrow record
+    TableArrow table_arrow = 13;
+
+    // profile_metadata contains metadata about the profile i.e. binaries, labels
+    ProfileMetadata profile_metadata = 14;
+  }
+
+  // total is the total number of samples shown in the report.
+  int64 total = 9;
+
+  // filtered is the number of samples filtered out of the report.
+  int64 filtered = 10;
+}
+
+// SeriesRequest is unimplemented
+message SeriesRequest {
+  // match ...
+  repeated string match = 1;
+
+  // start ...
+  google.protobuf.Timestamp start = 2;
+
+  // end ...
+  google.protobuf.Timestamp end = 3;
+}
+
+// SeriesResponse is unimplemented
+message SeriesResponse {}
+
+// LabelsRequest are the request values for labels
+message LabelsRequest {
+  // match are the set of matching strings
+  repeated string match = 1;
+
+  // start is the start of the time window to perform the query
+  google.protobuf.Timestamp start = 2;
+
+  // end is the end of the time window to perform the query
+  google.protobuf.Timestamp end = 3;
+
+  // profile_type is the type of profile to filter by
+  optional string profile_type = 4;
+}
+
+// LabelsResponse is the set of matching label names
+message LabelsResponse {
+  /// label_names are the set of matching label names
+  repeated string label_names = 1;
+
+  // warnings is unimplemented
+  repeated string warnings = 2;
+}
+
+// ValuesRequest are the request values for a values request
+message ValuesRequest {
+  // label_name is the label name to match values against
+  string label_name = 1;
+
+  // match are the set of matching strings to match values against
+  repeated string match = 2;
+
+  // start is the start of the time window to perform the query
+  google.protobuf.Timestamp start = 3;
+
+  // end is the end of the time window to perform the query
+  google.protobuf.Timestamp end = 4;
+
+  // profile_type is the type of profile to filter by
+  optional string profile_type = 5;
+}
+
+// ValuesResponse are the set of matching values
+message ValuesResponse {
+  // label_values are the set of matching label values
+  repeated string label_values = 1;
+
+  // warnings is unimplemented
+  repeated string warnings = 2;
+}
+
+// ValueType represents a value, including its type and unit
+message ValueType {
+  // type is the type of the value
+  string type = 1;
+
+  // unit is the unit of the value
+  string unit = 2;
+}
+
+// ShareProfileRequest represents the query denoting the profile and a description about the profile
+message ShareProfileRequest {
+  // QueryRequest that refers to the profile to be shared
+  QueryRequest query_request = 1;
+
+  // description about the profile
+  optional string description = 2;
+}
+
+// ShareProfileResponse represents the shared link of a profile
+message ShareProfileResponse {
+  // link to access the profile
+  string link = 1;
+}
+
+// TableArrow has the table encoded as a arrow record
+message TableArrow {
+  // record is the arrow record containing the actual table data
+  bytes record = 1;
+
+  // unit is the unit represented by the flame graph
+  string unit = 2;
+}
+
+// ProfileMetadata contains metadata about the profile i.e. binaries, labels
+message ProfileMetadata {
+  // mapping_files is the list of binaries in the profile
+  repeated string mapping_files = 1;
+
+  // labels is the list of labels in the profile
+  repeated string labels = 2;
+}

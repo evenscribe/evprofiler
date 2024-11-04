@@ -1,0 +1,324 @@
+syntax = "proto3";
+
+package parca.metastore.v1alpha1;
+
+option go_package = "github.com/parca-dev/parca/gen/go/metastore";
+
+// MetastoreService
+service MetastoreService {
+  // GetOrCreateMappings checks if the mappings in the request are already
+  // known and returns the known mapping (including its ID) if so. If a mapping
+  // does not already exist, it is written to the backing metastore.
+  rpc GetOrCreateMappings(GetOrCreateMappingsRequest) returns (GetOrCreateMappingsResponse) {}
+  // GetOrCreateFunctions checks if the functions in the request are already
+  // known and returns the known function (including its ID) if so. If a
+  // function does not already exist, it is written to the backing metastore.
+  rpc GetOrCreateFunctions(GetOrCreateFunctionsRequest) returns (GetOrCreateFunctionsResponse) {}
+  // GetOrCreateLocations checks if the locations in the request are already
+  // known and returns the known location (including its ID) if so. If a
+  // location does not already exist, it is written to the backing metastore.
+  rpc GetOrCreateLocations(GetOrCreateLocationsRequest) returns (GetOrCreateLocationsResponse) {}
+  // GetOrCreateStacktraces checks if the stacktraces in the request are
+  // already known and returns the known stacktrace (including its ID) if so.
+  // If a stacktrace does not already exist, it is written to the backing
+  // metastore.
+  rpc GetOrCreateStacktraces(GetOrCreateStacktracesRequest) returns (GetOrCreateStacktracesResponse) {}
+  // UnsymbolizedLocations returns locations that can be symbolized but haven't
+  // been asynchronously symbolized yet.
+  rpc UnsymbolizedLocations(UnsymbolizedLocationsRequest) returns (UnsymbolizedLocationsResponse) {}
+  // CreateLocationLines creates the location lines contained in the provided
+  // locations.
+  rpc CreateLocationLines(CreateLocationLinesRequest) returns (CreateLocationLinesResponse) {}
+  // Locations retrieves locations.
+  rpc Locations(LocationsRequest) returns (LocationsResponse) {}
+  // Functions retrieves functions.
+  rpc Functions(FunctionsRequest) returns (FunctionsResponse) {}
+  // Mappings retrieves mappings.
+  rpc Mappings(MappingsRequest) returns (MappingsResponse) {}
+  // Stacktraces retrieves mappings.
+  rpc Stacktraces(StacktracesRequest) returns (StacktracesResponse) {}
+}
+
+// GetOrCreateMappingsRequest contains all information about mappings that are
+// requested to be retrieved or created if they don't already exist.
+message GetOrCreateMappingsRequest {
+  // Mappings to be created or retrieved.
+  repeated Mapping mappings = 1;
+}
+
+// GetOrCreateMappingsResponse contains information about mappings requested.
+message GetOrCreateMappingsResponse {
+  // Mappings that are known to the backing metastore. If any mappings didn't
+  // exist before the request they have now been persisted and are uniquely
+  // identifyable through their key.
+  repeated Mapping mappings = 1;
+}
+
+// GetOrCreateFunctionsRequest contains all information about functions that are
+// requested to be retrieved or created if they don't already exist.
+message GetOrCreateFunctionsRequest {
+  // Functions to be created or retrieved.
+  repeated Function functions = 1;
+}
+
+// GetOrCreateFunctionsResponse contains information about functions requested.
+message GetOrCreateFunctionsResponse {
+  // Functions that are known to the backing metastore. If any functions didn't
+  // exist before the request they have now been persisted and are uniquely
+  // identifyable through their key.
+  repeated Function functions = 1;
+}
+
+// GetOrCreateLocationsRequest contains all information about locations that are
+// requested to be retrieved or created if they don't already exist.
+message GetOrCreateLocationsRequest {
+  // Locations to be created or retrieved.
+  repeated Location locations = 1;
+}
+
+// GetOrCreateLocationsResponse contains information about locations requested.
+message GetOrCreateLocationsResponse {
+  // Locations that are known to the backing metastore. If any locations didn't
+  // exist before the request they have now been persisted and are uniquely
+  // identifyable through their key.
+  repeated Location locations = 1;
+}
+
+// GetOrCreateStracktracesRequest contains all information about stacktraces
+// that are requested to be retrieved or created if they don't already exist.
+message GetOrCreateStacktracesRequest {
+  // Stacktraces to be created or retrieved.
+  repeated Stacktrace stacktraces = 1;
+}
+
+// GetOrCreateStacktracesResponse contains information about locations requested.
+message GetOrCreateStacktracesResponse {
+  // Stacktraces that are known to the backing metastore. If any stacktraces
+  // didn't exist before the request they have now been persisted and are
+  // uniquely identifyable through their key.
+  repeated Stacktrace stacktraces = 1;
+}
+
+// UnsymbolizedLocationsRequest contains information about the unsymbolized
+// locations requested. While currently empty, this could in the future contain
+// a sharding configuration or limit the number of locations to return.
+message UnsymbolizedLocationsRequest {
+  // The maximum number of locations to return.
+  uint32 limit = 1;
+  // The minimum key to start returning locations from.
+  string min_key = 2;
+}
+
+// UnsymbolizedLocationsResponse contains information about the requested
+// locations that should be symbolizable but potentially haven't been
+// symbolized yet.
+message UnsymbolizedLocationsResponse {
+  // Locations that have a mapping and address that should be symbolizable.
+  repeated Location locations = 1;
+  // Key of the last location returned. This can be used in a subsequent call
+  // to UnsymbolizedLocations to continue from the last returned location.
+  string max_key = 2;
+}
+
+// CreateLocationLinesRequest contains locations and their location lines to be
+// saved.
+message CreateLocationLinesRequest {
+  // Locations that have location lines to be saved.
+  repeated Location locations = 1;
+}
+
+// CreateLocationLinesResponse details about the location lines creation.
+message CreateLocationLinesResponse {}
+
+// StacktracesRequest contains information about the stacktraces requested.
+message StacktracesRequest {
+  // IDs of stacktraces to retrieve.
+  repeated string stacktrace_ids = 1;
+}
+
+// StacktracesRequest contains the requested stacktraces.
+message StacktracesResponse {
+  // Stacktraces that are known to the backing metastore.
+  repeated Stacktrace stacktraces = 1;
+}
+
+// LocationsRequest contains information about the locations requested.
+message LocationsRequest {
+  // IDs of locations to retrieve.
+  repeated string location_ids = 1;
+}
+
+// LocationsResponse contains the requested locations.
+message LocationsResponse {
+  // Locations that are known to the backing metastore.
+  repeated Location locations = 1;
+}
+
+// LocationLinesRequest contains information about the location's lines requested.
+message LocationLinesRequest {
+  // IDs of locations to retrieve location lines for.
+  repeated string location_ids = 1;
+}
+
+// FunctionsRequest contains information about the functions requested.
+message FunctionsRequest {
+  // IDs of functions to retrieve.
+  repeated string function_ids = 1;
+}
+
+// FunctionsResponse contains the requested functions.
+message FunctionsResponse {
+  // Functions that are known to the backing metastore.
+  repeated Function functions = 1;
+}
+
+// MappingsRequest contains information about the mappings requested.
+message MappingsRequest {
+  // IDs of mappings to retrieve.
+  repeated string mapping_ids = 1;
+}
+
+// MappingsResponse contains the requested mappings.
+message MappingsResponse {
+  // Mappings that are known to the backing metastore.
+  repeated Mapping mappings = 1;
+}
+
+// Sample is a stack trace with optional labels.
+message Sample {
+  // stacktrace_id references stack trace of the sample.
+  string stacktrace_id = 1;
+  // labels are extra labels for a stack trace.
+  map<string, SampleLabel> labels = 2;
+  // num_labels are the num of labels.
+  map<string, SampleNumLabel> num_labels = 3;
+  // num_units are the units for the labels.
+  map<string, SampleNumUnit> num_units = 4;
+}
+
+// Stacktrace is a collection of locations.
+message Stacktrace {
+  // stacktrace_id references stack trace of the stacktrace.
+  string id = 1;
+  // locations are the locations in the stack trace.
+  repeated string location_ids = 2;
+}
+
+// SampleLabel are the labels added to a Sample.
+message SampleLabel {
+  // labels for a label in a Sample.
+  repeated string labels = 1;
+}
+
+// SampleNumLabel are the num of labels of a Sample.
+message SampleNumLabel {
+  // num_labels are the num_label of a Sample.
+  repeated int64 num_labels = 1;
+}
+
+// SampleNumUnit are the num units of a Sample.
+message SampleNumUnit {
+  // units of a labels of a Sample.
+  repeated string units = 1;
+}
+
+// Location describes a single location of a stack traces.
+message Location {
+  // id is the unique identifier for the location.
+  string id = 1;
+
+  // address is the memory address of the location if present.
+  uint64 address = 2;
+
+  // mapping_id is the unique identifier for the mapping associated with the location.
+  string mapping_id = 4;
+
+  // is_folded indicates whether the location is folded into the previous location.
+  bool is_folded = 5;
+
+  // lines are the call frames represented by this location. Multiple lines
+  // indicate they have been inlined.
+  repeated Line lines = 6;
+
+  // mapping_index has the index into the mapping table where mappings are sent deduplicated.
+  uint32 mapping_index = 7;
+}
+
+// Line describes a source code function and its line number.
+message Line {
+  // function_id is the ID of the function.
+  string function_id = 1;
+
+  // line is the line number in the source file of the referenced function.
+  int64 line = 2;
+
+  // function_index is the index in the functions table.
+  uint32 function_index = 3;
+}
+
+// Function describes metadata of a source code function.
+message Function {
+  // id is the unique identifier for the function.
+  string id = 1;
+
+  // start_line is the line number in the source file of the first line of the function.
+  int64 start_line = 2;
+
+  // name is the name of the function.
+  string name = 3;
+
+  // system_name describes the name of the function, as identified by the
+  // system. For instance, it can be a C++ mangled name.
+  string system_name = 4;
+
+  // filename is the name of the source file of the function.
+  string filename = 5;
+
+  // name_string_index is the index in the string table to the name associated with the function.
+  uint32 name_string_index = 6;
+
+  // system_name_string_index is the index in the string table to the system_name associated with the function.
+  uint32 system_name_string_index = 7;
+
+  // filename_string_index is the index in the string table to the filename associated with the function.
+  uint32 filename_string_index = 8;
+}
+
+// Mapping describes a memory mapping.
+message Mapping {
+  // id is the unique identifier for the mapping.
+  string id = 1;
+
+  // start is the start address of the mapping.
+  uint64 start = 2;
+
+  // limit is the length of the address space of the mapping.
+  uint64 limit = 3;
+
+  // offset in the binary that corresponds to the first mapped address.
+  uint64 offset = 4;
+
+  // file is the name of the file associated with the mapping.
+  string file = 5;
+
+  // build_id is the build ID of the mapping.
+  string build_id = 6;
+
+  // has_functions indicates whether the mapping has associated functions.
+  bool has_functions = 7;
+
+  // has_filenames indicates whether the mapping has associated filenames.
+  bool has_filenames = 8;
+
+  // has_line_numbers indicates whether the mapping has associated line numbers.
+  bool has_line_numbers = 9;
+
+  // has_inline_frames indicates whether the mapping has associated inline frames.
+  bool has_inline_frames = 10;
+
+  // fileStringIndex is the index in the string table to the file name associated with the mapping.
+  uint32 file_string_index = 11;
+
+  // build_id_string_index is the index in the string table to the build ID of the mapping.
+  uint32 build_id_string_index = 12;
+}
