@@ -1,10 +1,6 @@
-mod normalizer;
-mod profile;
-
+use crate::normalizer::NormalizedWriteRawRequest;
 use crate::profilestorepb::profile_store_service_server::ProfileStoreService;
 use crate::profilestorepb::{WriteRawRequest, WriteRawResponse, WriteRequest, WriteResponse};
-use normalizer::NormalizedWriteRawRequest;
-use std::collections::{HashMap, HashSet};
 use std::{pin::Pin, result::Result};
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status, Streaming};
