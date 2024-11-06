@@ -13,6 +13,7 @@ log = "0.4.22"
 colog = "1.3.0"
 async-stream = "0.3.6"
 arrow = "53.2.0"
+flate2 = "1.0"
 
 [build-dependencies]
 tonic-build = "0.12.3"
