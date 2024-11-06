@@ -5,6 +5,8 @@ use profilestorepb::{
 use tonic::transport::Server;
 
 mod agent_store;
+mod normalizer;
+mod profile;
 mod profile_store;
 
 pub(crate) mod profilestorepb {
@@ -13,6 +15,10 @@ pub(crate) mod profilestorepb {
 
 pub(crate) mod metapb {
     tonic::include_proto!("parca.metastore.v1alpha1");
+}
+
+pub(crate) mod pprofpb {
+    tonic::include_proto!("perftools.profiles");
 }
 
 #[tokio::main]
