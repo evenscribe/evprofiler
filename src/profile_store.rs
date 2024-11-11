@@ -1,4 +1,4 @@
-use crate::normalizer::NormalizedWriteRawRequest;
+use crate::normalizer;
 use crate::profilestorepb::profile_store_service_server::ProfileStoreService;
 use crate::profilestorepb::{WriteRawRequest, WriteRawResponse, WriteRequest, WriteResponse};
 use std::{pin::Pin, result::Result};
@@ -17,11 +17,7 @@ impl ProfileStoreService for ProfileStore {
         &self,
         request: Request<WriteRawRequest>,
     ) -> Result<Response<WriteRawResponse>, Status> {
-        let normalized_request = NormalizedWriteRawRequest::try_from(&request.into_inner())?;
-        log::info!(
-            "Received ProfileStoreService::write_raw request \n Request: {:?}",
-            normalized_request
-        );
+        let _ = self.write_series(&request.into_inner())?;
         return Ok(Response::new(WriteRawResponse {}));
     }
     /// Server streaming response type for the Write method.
@@ -39,6 +35,8 @@ impl ProfileStoreService for ProfileStore {
     ) -> Result<Response<Self::WriteStream>, Status> {
         let mut stream = request.into_inner();
 
+        log::info!("Received ProfileStoreService::write request",);
+
         let output = async_stream::try_stream! {
             while let Some(request) = stream.message().await? {
             log::info!(
@@ -50,5 +48,13 @@ impl ProfileStoreService for ProfileStore {
         };
 
         Ok(Response::new(Box::pin(output)))
+    }
+}
+
+impl ProfileStore {
+    pub fn write_series(&self, request: &WriteRawRequest) -> Result<(), Status> {
+        let record = normalizer::write_raw_request_to_arrow_record(request);
+        log::info!("Record: {:?}", record);
+        Ok(())
     }
 }

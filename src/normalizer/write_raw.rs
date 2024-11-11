@@ -10,8 +10,8 @@ use tonic::Status;
 
 #[derive(Debug)]
 pub struct NormalizedWriteRawRequest {
-    series: Vec<Series>,
-    all_label_names: Vec<String>,
+    pub(crate) series: Vec<Series>,
+    pub(crate) all_label_names: Vec<String>,
 }
 
 impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
@@ -21,6 +21,7 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
         let mut all_label_names: HashSet<String> = HashSet::new();
         let mut series: Vec<Series> = Vec::with_capacity(request.series.len());
 
+        log::info!("raw_series: {:?}", request.series.len());
         for raw_series in request.series.iter() {
             let mut ls: HashMap<String, String> = HashMap::new();
             let mut name: String = "".into();
@@ -76,8 +77,8 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
                     }
                 };
 
-                let _ =
-                    super::utils::validate_pprof_profile(&p, sample.executable_info.as_slice())?;
+                // let _ =
+                super::utils::validate_pprof_profile(&p, sample.executable_info.as_slice())?;
 
                 let _ = super::utils::label_names_from_profile(
                     &ls,
@@ -99,8 +100,6 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
         }
 
         let all_label_names = Vec::from_iter(all_label_names);
-        log::info!("series: {:?}", series);
-        log::info!("all_label_names: {:?}", all_label_names);
 
         Ok(NormalizedWriteRawRequest {
             series,

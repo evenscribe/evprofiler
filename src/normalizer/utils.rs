@@ -1,10 +1,17 @@
 use super::profile::NormalizedProfile;
+use super::write_raw::NormalizedWriteRawRequest;
 use super::NormalizedSample;
 use crate::pprofpb::{Function, Location, Mapping, Profile, Sample};
-use crate::profile::{encode_pprof_location, Meta, ValueType};
-use crate::profilestorepb::ExecutableInfo;
+use crate::profile::{encode_pprof_location, schema, Meta, ValueType};
+use crate::profilestorepb::{ExecutableInfo, WriteRawRequest};
+use arrow::array::{
+    ArrayRef, BinaryDictionaryBuilder, GenericByteDictionaryBuilder, Int64Builder, ListBuilder,
+};
+use arrow::datatypes::{GenericBinaryType, Int32Type};
+use arrow::record_batch::RecordBatch;
 use std::collections::{HashMap, HashSet};
 use std::result::Result;
+use std::sync::Arc;
 use tonic::Status;
 
 const NANOS_PER_MILLI: i64 = 1_000_000;
@@ -13,37 +20,36 @@ pub fn validate_pprof_profile(
     profile: &Profile,
     executable_info: &[ExecutableInfo],
 ) -> Result<(), Status> {
-    match profile.string_table.first() {
-        Some(s) => {
-            if !s.is_empty() {
-                return Err(Status::invalid_argument(format!(
-                    "first item in string table is expected to be empty string, but it is {}",
-                    s
-                )));
-            }
+    if let Some(elem) = profile.string_table.first() {
+        if !elem.is_empty() {
+            return Err(Status::invalid_argument(
+                "first string table element is expected to be empty",
+            ));
         }
-        None => {}
-    };
+    }
+
+    let string_table_len = profile.string_table.len();
+    let mappings_length = profile.mapping.len();
 
     for (i, mapping) in profile.mapping.iter().enumerate() {
         if mapping.id != (i + 1) as u64 {
             return Err(Status::invalid_argument("mapping id is not sequential"));
         }
 
-        if mapping.filename != 0 && mapping.filename > profile.string_table.len() as i64 {
+        if mapping.filename != 0 && mapping.filename > string_table_len as i64 {
             return Err(Status::invalid_argument(
                 "mapping filename index out of bounds",
             ));
         }
 
-        if mapping.build_id != 0 && mapping.build_id > profile.string_table.len() as i64 {
+        if mapping.build_id != 0 && mapping.build_id > string_table_len as i64 {
             return Err(Status::invalid_argument(
                 "mapping build_id index out of bounds",
             ));
         }
     }
 
-    if executable_info.len() != profile.mapping.len() {
+    if executable_info.len() != mappings_length {
         return Err(Status::invalid_argument(format!(
             "Profile has {} mappings, but {} executable infos",
             profile.mapping.len(),
@@ -51,24 +57,25 @@ pub fn validate_pprof_profile(
         )));
     }
 
+    let functions_length = profile.function.len();
     for (i, function) in profile.function.iter().enumerate() {
         if function.id != (i + 1) as u64 {
             return Err(Status::invalid_argument("function id is not sequential"));
         }
 
-        if function.name != 0 && function.name > profile.string_table.len() as i64 {
+        if function.name != 0 && function.name > string_table_len as i64 {
             return Err(Status::invalid_argument(
                 "function name index out of bounds",
             ));
         }
 
-        if function.system_name != 0 && function.system_name > profile.string_table.len() as i64 {
+        if function.system_name != 0 && function.system_name > string_table_len as i64 {
             return Err(Status::invalid_argument(
                 "function system_name index out of bounds",
             ));
         }
 
-        if function.filename != 0 && function.filename > profile.string_table.len() as i64 {
+        if function.filename != 0 && function.filename > string_table_len as i64 {
             return Err(Status::invalid_argument(
                 "function filename index out of bounds",
             ));
@@ -87,7 +94,7 @@ pub fn validate_pprof_profile(
         }
 
         for line in location.line.iter() {
-            if line.function_id != 0 && line.function_id > profile.function.len() as u64 {
+            if line.function_id != 0 && line.function_id > functions_length as u64 {
                 return Err(Status::invalid_argument(format!(
                     "location {} has invalid function_id {}",
                     location.id, line.function_id
@@ -96,7 +103,7 @@ pub fn validate_pprof_profile(
         }
     }
 
-    if profile.sample_type.len() != 0 && profile.sample.len() != 0 {
+    if profile.sample_type.len() == 0 && profile.sample.len() != 0 {
         return Err(Status::invalid_argument("missing sample type information"));
     }
 
@@ -137,7 +144,7 @@ pub fn validate_pprof_profile(
                 )));
             }
 
-            if label.key > profile.string_table.len() as i64 {
+            if label.key > string_table_len as i64 {
                 return Err(Status::invalid_argument(format!(
                     "sample {} has label key {} at index {}. it must be less than {}.",
                     i,
@@ -147,7 +154,7 @@ pub fn validate_pprof_profile(
                 )));
             }
 
-            if label.str != 0 && label.str > profile.string_table.len() as i64 {
+            if label.str != 0 && label.str > string_table_len as i64 {
                 return Err(Status::invalid_argument(format!(
                     "sample {} has label str {} at index {}. it must be less than {}.",
                     i,
@@ -350,4 +357,162 @@ fn serialize_stacktrace(
     }
 
     stacktrace
+}
+
+pub fn write_raw_request_to_arrow_record(request: &WriteRawRequest) -> Result<RecordBatch, Status> {
+    let normalized_request = NormalizedWriteRawRequest::try_from(request)?;
+    let arrow_schema = schema::create_schema(&normalized_request.all_label_names);
+
+    let mut duration_builder = Int64Builder::new();
+    let mut name_builder = BinaryDictionaryBuilder::<Int32Type>::new();
+    let mut period_builder = Int64Builder::new();
+    let mut period_type_builder = BinaryDictionaryBuilder::<Int32Type>::new();
+    let mut period_unit_builder = BinaryDictionaryBuilder::<Int32Type>::new();
+    let mut sample_type_builder = BinaryDictionaryBuilder::<Int32Type>::new();
+    let mut sample_unit_builder = BinaryDictionaryBuilder::<Int32Type>::new();
+    let mut stacktrace_builder = ListBuilder::new(BinaryDictionaryBuilder::<Int32Type>::new());
+    let mut timestamp_builder = Int64Builder::new();
+    let mut value_builder = Int64Builder::new();
+
+    for series in normalized_request.series.iter() {
+        for sample in series.samples.iter() {
+            for np in sample.iter() {
+                for ns in np.samples.iter() {
+                    duration_builder.append_value(np.meta.duration);
+                    period_builder.append_value(np.meta.period);
+                    timestamp_builder.append_value(np.meta.timestamp);
+                    value_builder.append_value(ns.value);
+
+                    match name_builder.append(np.meta.name.clone()) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(Status::invalid_argument(format!(
+                                "Failed to append label\nDetails: {}",
+                                e
+                            )));
+                        }
+                    };
+
+                    match period_type_builder.append(np.meta.period_type.type_.clone()) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(Status::invalid_argument(format!(
+                                "Failed to append label\nDetails: {}",
+                                e
+                            )));
+                        }
+                    };
+
+                    match period_unit_builder.append(np.meta.period_type.unit.clone()) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(Status::invalid_argument(format!(
+                                "Failed to append label\nDetails: {}",
+                                e
+                            )));
+                        }
+                    };
+
+                    match sample_type_builder.append(np.meta.sample_type.type_.clone()) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(Status::invalid_argument(format!(
+                                "Failed to append label\nDetails: {}",
+                                e
+                            )));
+                        }
+                    };
+
+                    match sample_unit_builder.append(np.meta.sample_type.unit.clone()) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(Status::invalid_argument(format!(
+                                "Failed to append label\nDetails: {}",
+                                e
+                            )));
+                        }
+                    };
+
+                    stacktrace_builder.append(ns.locations.is_empty());
+                    for location in ns.locations.iter() {
+                        match location.is_empty() {
+                            true => {
+                                stacktrace_builder.values().append_null();
+                            }
+                            false => {
+                                stacktrace_builder.values().append(location.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut label_to_builder: HashMap<
+        String,
+        GenericByteDictionaryBuilder<Int32Type, GenericBinaryType<i32>>,
+    > = HashMap::new();
+
+    for name in normalized_request.all_label_names.iter() {
+        let key = "label.".to_string() + name;
+        let mut builder = BinaryDictionaryBuilder::<Int32Type>::new();
+
+        for series in normalized_request.series.iter() {
+            if series.labels.contains_key(name) {
+                let value = series.labels.get(name).unwrap();
+                for sample in series.samples.iter() {
+                    for np in sample {
+                        for _ in np.samples.iter() {
+                            match builder.append(value) {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    return Err(Status::invalid_argument(format!(
+                                        "Failed to append label\nDetails: {}",
+                                        e
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                for sample in series.samples.iter() {
+                    for np in sample {
+                        builder.append_nulls(np.samples.len());
+                    }
+                }
+            }
+        }
+
+        label_to_builder.insert(key, builder);
+    }
+
+    let mut fields: Vec<ArrayRef> = vec![
+        Arc::new(duration_builder.finish()),
+        Arc::new(name_builder.finish()),
+        Arc::new(period_builder.finish()),
+        Arc::new(period_type_builder.finish()),
+        Arc::new(period_unit_builder.finish()),
+        Arc::new(sample_type_builder.finish()),
+        Arc::new(sample_unit_builder.finish()),
+        Arc::new(stacktrace_builder.finish()),
+        Arc::new(timestamp_builder.finish()),
+        Arc::new(value_builder.finish()),
+    ];
+
+    for labels in label_to_builder.values_mut() {
+        fields.push(Arc::new(labels.finish()));
+    }
+
+    let rb = match RecordBatch::try_new(Arc::new(arrow_schema), fields) {
+        Ok(rb) => rb,
+        Err(e) => {
+            return Err(Status::invalid_argument(format!(
+                "Failed to create record batch\nDetails: {}",
+                e
+            )));
+        }
+    };
+    Ok(rb)
 }
