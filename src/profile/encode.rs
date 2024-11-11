@@ -38,8 +38,8 @@ pub fn encode_pprof_location(
         functions,
         string_table,
     ));
-    let _ = write_uvarint(&mut buf, location.address);
-    let _ = write_uvarint(&mut buf, location.line.len() as u64);
+    write_uvarint(&mut buf, location.address);
+    write_uvarint(&mut buf, location.line.len() as u64);
 
     if mapping.id == 0 {
         buf.push(0x0);
@@ -49,44 +49,44 @@ pub fn encode_pprof_location(
             0 => "",
             _ => &string_table[mapping.build_id as usize],
         };
-        let _ = write_string(&mut buf, build_id);
+        write_string(&mut buf, build_id);
 
         let filename = match mapping.filename {
             0 => "",
             _ => &string_table[mapping.filename as usize],
         };
-        let _ = write_string(&mut buf, filename);
-        let _ = write_uvarint(&mut buf, mapping.memory_start);
-        let _ = write_uvarint(&mut buf, mapping.memory_limit - mapping.memory_start);
-        let _ = write_uvarint(&mut buf, mapping.file_offset);
+        write_string(&mut buf, filename);
+        write_uvarint(&mut buf, mapping.memory_start);
+        write_uvarint(&mut buf, mapping.memory_limit - mapping.memory_start);
+        write_uvarint(&mut buf, mapping.file_offset);
     }
 
     for line in location.line.iter() {
-        let _ = write_uvarint(&mut buf, line.line as u64);
+        write_uvarint(&mut buf, line.line as u64);
 
         if line.function_id != 0 {
             buf.push(0x1);
 
             let f = &functions[line.function_id as usize - 1];
-            let _ = write_uvarint(&mut buf, f.start_line as u64);
+            write_uvarint(&mut buf, f.start_line as u64);
 
             let name = match f.name {
                 0 => "",
                 _ => &string_table[f.name as usize],
             };
-            let _ = write_string(&mut buf, name);
+            write_string(&mut buf, name);
 
             let system_name = match f.system_name {
                 0 => "",
                 _ => &string_table[f.system_name as usize],
             };
-            let _ = write_string(&mut buf, system_name);
+            write_string(&mut buf, system_name);
 
             let filename = match f.filename {
                 0 => "",
                 _ => &string_table[f.filename as usize],
             };
-            let _ = write_string(&mut buf, filename);
+            write_string(&mut buf, filename);
         } else {
             buf.push(0x0);
         }

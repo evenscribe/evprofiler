@@ -103,7 +103,7 @@ pub fn validate_pprof_profile(
         }
     }
 
-    if profile.sample_type.len() == 0 && profile.sample.len() != 0 {
+    if profile.sample_type.is_empty() && !profile.sample.is_empty() {
         return Err(Status::invalid_argument("missing sample type information"));
     }
 
@@ -312,10 +312,8 @@ pub fn labels_from_sample(
 
     for label in plabels.iter() {
         let key = &string_table[label.key as usize];
-        if label.num != 0 {
-            if !num_labels.contains_key(key) {
-                num_labels.insert(key.to_string(), label.num);
-            }
+        if label.num != 0 && !num_labels.contains_key(key) {
+            num_labels.insert(key.to_string(), label.num);
         }
     }
 
@@ -440,7 +438,7 @@ pub fn write_raw_request_to_arrow_record(request: &WriteRawRequest) -> Result<Re
                                 stacktrace_builder.values().append_null();
                             }
                             false => {
-                                stacktrace_builder.values().append(location.clone());
+                                let _ = stacktrace_builder.values().append(location.clone());
                             }
                         }
                     }

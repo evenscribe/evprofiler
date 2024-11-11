@@ -80,7 +80,7 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
                 // let _ =
                 super::utils::validate_pprof_profile(&p, sample.executable_info.as_slice())?;
 
-                let _ = super::utils::label_names_from_profile(
+                super::utils::label_names_from_profile(
                     &ls,
                     p.string_table.as_slice(),
                     p.sample.as_slice(),
