@@ -60,7 +60,7 @@ pub fn create_schema(labels: &[String]) -> Schema {
     for label in labels {
         fields.push(Field::new(
             format!("{}.{}", COLUMN_LABELS, label),
-            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Binary)),
             true,
         ));
     }
