@@ -1,4 +1,5 @@
 mod encode;
+pub mod schema;
 
 use crate::metapb::{Function, Mapping};
 use arrow::record_batch::RecordBatch;
