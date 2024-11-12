@@ -5,6 +5,7 @@ use profilestorepb::{
 use tonic::transport::Server;
 
 mod agent_store;
+mod debuginfo_store;
 mod normalizer;
 mod profile;
 mod profile_store;
@@ -19,6 +20,10 @@ pub(crate) mod metapb {
 
 pub(crate) mod pprofpb {
     tonic::include_proto!("perftools.profiles");
+}
+
+pub(crate) mod debuginfopb {
+    tonic::include_proto!("parca.debuginfo.v1alpha1");
 }
 
 #[tokio::main]
