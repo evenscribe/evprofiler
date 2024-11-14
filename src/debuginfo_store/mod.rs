@@ -48,6 +48,7 @@ impl DebuginfoService for DebuginfoStore {
         &self,
         request: tonic::Request<tonic::Streaming<UploadRequest>>,
     ) -> std::result::Result<Response<UploadResponse>, Status> {
+        Ok(Response::new(UploadResponse::default()))
     }
 
     // ShouldInitiateUpload returns whether an upload should be initiated for the
@@ -58,11 +59,12 @@ impl DebuginfoService for DebuginfoStore {
         request: tonic::Request<ShouldInitiateUploadRequest>,
     ) -> std::result::Result<Response<ShouldInitiateUploadResponse>, Status> {
         let request = request.into_inner();
-        let build_id = request.build_id;
+        let build_id = &request.build_id;
 
         let _ = validate_input(&build_id)?;
+        let req_type = &request.r#type();
 
-        match self.metadata.fetch(&build_id, request.r#type()) {
+        match self.metadata.fetch(&build_id, req_type) {
             Some(debuginfo) => {}
             None => {
                 // First time we see this Build ID.
@@ -70,21 +72,26 @@ impl DebuginfoService for DebuginfoStore {
                 if build_id_type == BuildIdType::Gnu
                     || build_id_type == BuildIdType::UnknownUnspecified
                 {
-                    let exists = self.debuginfod.exists(&build_id);
+                    // if self.debuginfod.exists(&build_id) {}
+                    Err(Status::invalid_argument(REASON_FIRST_TIME_SEEN))?;
                 }
             }
         };
+
+        Ok(Response::new(ShouldInitiateUploadResponse::default()))
     }
     /// InitiateUpload returns a strategy and information to upload debug info for a given build_id.
     async fn initiate_upload(
         &self,
         request: tonic::Request<InitiateUploadRequest>,
     ) -> std::result::Result<Response<InitiateUploadResponse>, Status> {
+        Ok(Response::new(InitiateUploadResponse::default()))
     }
     /// MarkUploadFinished marks the upload as finished for a given build_id.
     async fn mark_upload_finished(
         &self,
         request: tonic::Request<MarkUploadFinishedRequest>,
     ) -> std::result::Result<Response<MarkUploadFinishedResponse>, Status> {
+        Ok(Response::new(MarkUploadFinishedResponse::default()))
     }
 }
