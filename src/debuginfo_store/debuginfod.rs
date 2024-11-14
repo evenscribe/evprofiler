@@ -1,4 +1,3 @@
-use crate::debuginfopb::Debuginfo;
 use std::{collections::HashMap, time::Duration};
 use tonic::Status;
 use ureq;
@@ -37,9 +36,11 @@ impl DebugInfod {
     }
 
     fn debuginfo_request(&mut self, build_id: &str) -> Result<&[u8], Status> {
-        let url = self.upstream_server.clone();
-        url.join(format!("buildid/{}/debuginfo", build_id).as_str())
+        let url = self
+            .upstream_server
+            .join(format!("buildid/{}/debuginfo", build_id).as_str())
             .unwrap();
+
         self.request(url)
     }
 
@@ -68,5 +69,35 @@ impl DebugInfod {
         }
 
         Ok(self.bucket.get(url.as_str()).unwrap())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_debuginfod_get() {
+        let mut debuginfod = DebugInfod::default();
+
+        // testing for linux's clear exec build id
+        let debug_ = debuginfod
+            .get("252f7dc22ca9d935e8334f04a0232f35359b5880")
+            .unwrap();
+
+        assert_eq!(debug_.is_empty(), false);
+    }
+
+    #[test]
+    fn test_debuginfod_exists() {
+        let mut debuginfod = DebugInfod::default();
+        // testing for a random buildid
+        assert_eq!(debuginfod.exists("123"), false);
+
+        // testing for linux's clear exec build id
+        assert_eq!(
+            debuginfod.exists("252f7dc22ca9d935e8334f04a0232f35359b5880"),
+            true,
+        );
     }
 }
