@@ -1,7 +1,6 @@
+use self::debuginfopb::debuginfo::Source;
 use crate::debuginfopb::{self, Debuginfo, DebuginfoType};
 use std::collections::HashMap;
-
-use self::debuginfopb::debuginfo::Source;
 
 #[derive(Debug, Default)]
 pub struct MetadataStore {

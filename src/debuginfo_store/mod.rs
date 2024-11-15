@@ -3,6 +3,7 @@ mod metadata;
 
 use crate::debuginfopb::debuginfo::Source;
 use crate::debuginfopb::debuginfo_service_server::DebuginfoService;
+use crate::debuginfopb::Debuginfo;
 use crate::debuginfopb::{
     self, BuildIdType, InitiateUploadRequest, InitiateUploadResponse, MarkUploadFinishedRequest,
     MarkUploadFinishedResponse, ShouldInitiateUploadRequest, ShouldInitiateUploadResponse,
@@ -66,139 +67,23 @@ impl DebuginfoService for DebuginfoStore {
         request: tonic::Request<ShouldInitiateUploadRequest>,
     ) -> std::result::Result<Response<ShouldInitiateUploadResponse>, Status> {
         let request = request.into_inner();
-        let build_id = &request.build_id;
+        validate_input(&request.build_id)?;
 
-        let _ = validate_input(&build_id)?;
-        let req_type = &request.r#type();
+        let mut metadata = self
+            .metadata
+            .lock()
+            .map_err(|_| Status::internal("Failed to lock metadata"))?;
+        let mut debuginfod = self
+            .debuginfod
+            .lock()
+            .map_err(|_| Status::internal("Failed to lock debuginfod"))?;
 
-        let mut metadata = match self.metadata.lock() {
-            Ok(metadata) => metadata,
-            Err(_) => return Err(Status::internal("Failed to lock metadata")),
-        };
-
-        let mut debuginfod = match self.debuginfod.lock() {
-            Ok(debuginfod) => debuginfod,
-            Err(_) => return Err(Status::internal("Failed to lock debuginfod")),
-        };
-
-        match metadata.fetch(&build_id, req_type) {
-            Some(debuginfo) => match Source::from_i32(debuginfo.source) {
-                Some(Source::Upload) => match &debuginfo.upload {
-                    Some(upload) => match State::from_i32(upload.state) {
-                        Some(State::Uploading) => {
-                            if self.is_upload_stale(&upload) {
-                                return Ok(Response::new(ShouldInitiateUploadResponse {
-                                    should_initiate_upload: true,
-                                    reason: REASON_UPLOAD_STALE.into(),
-                                }));
-                            }
-                            return Ok(Response::new(ShouldInitiateUploadResponse {
-                                should_initiate_upload: false,
-                                reason: REASON_UPLOAD_IN_PROGRESS.into(),
-                            }));
-                        }
-                        Some(State::Uploaded) => {
-                            if debuginfo.quality.is_none()
-                                || debuginfo.quality.unwrap().not_valid_elf
-                            {
-                                if request.force {
-                                    return Ok(Response::new(ShouldInitiateUploadResponse {
-                                        should_initiate_upload: true,
-                                        reason: REASON_DEBUGINFO_ALREADY_EXISTS_BUT_FORCED.into(),
-                                    }));
-                                }
-                                return Ok(Response::new(ShouldInitiateUploadResponse {
-                                    should_initiate_upload: false,
-                                    reason: REASON_DEBUGINFO_ALREADY_EXISTS.into(),
-                                }));
-                            }
-
-                            if request.hash.is_empty() {
-                                return Ok(Response::new(ShouldInitiateUploadResponse {
-                                    should_initiate_upload: true,
-                                    reason: REASON_DEBUGINFO_INVALID.into(),
-                                }));
-                            }
-
-                            match &debuginfo.upload {
-                                Some(upload) => {
-                                    if upload.hash.eq(&request.hash) {
-                                        return Ok(Response::new(ShouldInitiateUploadResponse {
-                                            should_initiate_upload: false,
-                                            reason: REASON_DEBUGINFO_EQUAL.into(),
-                                        }));
-                                    }
-                                }
-                                None => {
-                                    return Ok(Response::new(ShouldInitiateUploadResponse {
-                                        should_initiate_upload: true,
-                                        reason: REASON_DEBUGINFO_INVALID.into(),
-                                    }));
-                                }
-                            }
-
-                            return Ok(Response::new(ShouldInitiateUploadResponse {
-                                should_initiate_upload: true,
-                                reason: REASON_DEBUGINFO_NOT_EQUAL.into(),
-                            }));
-                        }
-
-                        _ => {
-                            return Err(Status::internal(
-                                "inconssistent metadata: unknown upload state",
-                            ));
-                        }
-                    },
-                    None => {
-                        return Err(Status::internal(
-                            "inconssistent metadata: unknown upload state",
-                        ));
-                    }
-                },
-
-                Some(Source::Debuginfod) => {
-                    if debuginfo.quality.is_none() || debuginfo.quality.unwrap().not_valid_elf {
-                        return Ok(Response::new(ShouldInitiateUploadResponse {
-                            should_initiate_upload: true,
-                            reason: REASON_DEBUGINFOD_SOURCE.into(),
-                        }));
-                    }
-
-                    return Ok(Response::new(ShouldInitiateUploadResponse {
-                        should_initiate_upload: true,
-                        reason: REASON_DEBUGINFOD_INVALID.into(),
-                    }));
-                }
-
-                _ => {
-                    return Err(Status::internal("inconssistent metadata: unknown source"));
-                }
-            },
-            None => {
-                // First time we see this Build ID.
-                let build_id_type = request.build_id_type();
-                if build_id_type == BuildIdType::Gnu
-                    || build_id_type == BuildIdType::UnknownUnspecified
-                {
-                    if debuginfod.exists(&build_id) {
-                        metadata.mark(&build_id, req_type);
-
-                        return Ok(Response::new(ShouldInitiateUploadResponse {
-                            should_initiate_upload: false,
-                            reason: REASON_DEBUGINFO_IN_DEBUGINFOD.into(),
-                        }));
-                    }
-                } else {
-                    return Ok(Response::new(ShouldInitiateUploadResponse {
-                        should_initiate_upload: true,
-                        reason: REASON_FIRST_TIME_SEEN.into(),
-                    }));
-                }
-            }
-        };
-
-        Ok(Response::new(ShouldInitiateUploadResponse::default()))
+        match metadata.fetch(&request.build_id, &request.r#type()) {
+            Some(debuginfo) => self.handle_existing_debuginfo(&request, &debuginfo),
+            None => self.handle_new_build_id(&request, &mut metadata, &mut debuginfod),
+        }
     }
+
     /// InitiateUpload returns a strategy and information to upload debug info for a given build_id.
     async fn initiate_upload(
         &self,
@@ -240,5 +125,153 @@ impl DebuginfoStore {
 
     fn time_now(&self) -> DateTime<Utc> {
         Utc::now()
+    }
+
+    fn handle_existing_debuginfo(
+        &self,
+        request: &ShouldInitiateUploadRequest,
+        debuginfo: &Debuginfo,
+    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+        match Source::from_i32(debuginfo.source) {
+            Some(Source::Upload) => self.handle_upload_source(request, debuginfo),
+            Some(Source::Debuginfod) => self.handle_debuginfod_source(debuginfo),
+            _ => Err(Status::internal("Inconsistent metadata: unknown source")),
+        }
+    }
+
+    fn handle_upload_source(
+        &self,
+        request: &ShouldInitiateUploadRequest,
+        debuginfo: &Debuginfo,
+    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+        let upload = debuginfo
+            .upload
+            .as_ref()
+            .ok_or_else(|| Status::internal("Inconsistent metadata: missing upload info"))?;
+
+        match State::from_i32(upload.state) {
+            Some(State::Uploading) => self.handle_uploading_state(upload),
+            Some(State::Uploaded) => self.handle_uploaded_state(request, debuginfo),
+            _ => Err(Status::internal(
+                "Inconsistent metadata: unknown upload state",
+            )),
+        }
+    }
+
+    fn handle_uploading_state(
+        &self,
+        upload: &DebuginfoUpload,
+    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+        if self.is_upload_stale(upload) {
+            Ok(Response::new(ShouldInitiateUploadResponse {
+                should_initiate_upload: true,
+                reason: REASON_UPLOAD_STALE.into(),
+            }))
+        } else {
+            Ok(Response::new(ShouldInitiateUploadResponse {
+                should_initiate_upload: false,
+                reason: REASON_UPLOAD_IN_PROGRESS.into(),
+            }))
+        }
+    }
+
+    fn handle_uploaded_state(
+        &self,
+        request: &ShouldInitiateUploadRequest,
+        debuginfo: &Debuginfo,
+    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+        if !self.is_valid_elf(debuginfo) {
+            return self.handle_invalid_elf(request);
+        }
+
+        if request.hash.is_empty() {
+            return Ok(Response::new(ShouldInitiateUploadResponse {
+                should_initiate_upload: true,
+                reason: REASON_DEBUGINFO_INVALID.into(),
+            }));
+        }
+
+        self.compare_hash(request, debuginfo)
+    }
+
+    fn is_valid_elf(&self, debuginfo: &Debuginfo) -> bool {
+        debuginfo
+            .quality
+            .as_ref()
+            .map_or(false, |q| !q.not_valid_elf)
+    }
+
+    fn handle_invalid_elf(
+        &self,
+        request: &ShouldInitiateUploadRequest,
+    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+        Ok(Response::new(ShouldInitiateUploadResponse {
+            should_initiate_upload: request.force,
+            reason: if request.force {
+                REASON_DEBUGINFO_ALREADY_EXISTS_BUT_FORCED.into()
+            } else {
+                REASON_DEBUGINFO_ALREADY_EXISTS.into()
+            },
+        }))
+    }
+
+    fn compare_hash(
+        &self,
+        request: &ShouldInitiateUploadRequest,
+        debuginfo: &Debuginfo,
+    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+        match &debuginfo.upload {
+            Some(upload) if upload.hash.eq(&request.hash) => {
+                Ok(Response::new(ShouldInitiateUploadResponse {
+                    should_initiate_upload: false,
+                    reason: REASON_DEBUGINFO_EQUAL.into(),
+                }))
+            }
+            Some(_) => Ok(Response::new(ShouldInitiateUploadResponse {
+                should_initiate_upload: true,
+                reason: REASON_DEBUGINFO_NOT_EQUAL.into(),
+            })),
+            None => Ok(Response::new(ShouldInitiateUploadResponse {
+                should_initiate_upload: true,
+                reason: REASON_DEBUGINFO_INVALID.into(),
+            })),
+        }
+    }
+
+    fn handle_debuginfod_source(
+        &self,
+        debuginfo: &Debuginfo,
+    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+        Ok(Response::new(ShouldInitiateUploadResponse {
+            should_initiate_upload: true,
+            reason: if !self.is_valid_elf(debuginfo) {
+                REASON_DEBUGINFOD_SOURCE.into()
+            } else {
+                REASON_DEBUGINFOD_INVALID.into()
+            },
+        }))
+    }
+
+    fn handle_new_build_id(
+        &self,
+        request: &ShouldInitiateUploadRequest,
+        metadata: &mut MetadataStore,
+        debuginfod: &mut DebugInfod,
+    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+        match request.build_id_type() {
+            BuildIdType::Gnu | BuildIdType::UnknownUnspecified
+                if debuginfod.exists(&request.build_id) =>
+            {
+                metadata.mark(&request.build_id, &request.r#type());
+                Ok(Response::new(ShouldInitiateUploadResponse {
+                    should_initiate_upload: false,
+                    reason: REASON_DEBUGINFO_IN_DEBUGINFOD.into(),
+                }))
+            }
+            _ => Ok(Response::new(ShouldInitiateUploadResponse {
+                should_initiate_upload: true,
+                reason: REASON_FIRST_TIME_SEEN.into(),
+            })),
+        }
     }
 }
