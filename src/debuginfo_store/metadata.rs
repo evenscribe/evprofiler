@@ -33,7 +33,7 @@ impl MetadataStore {
             path,
             Debuginfo {
                 build_id: build_id.to_string(),
-                r#type: req_type.clone().into(),
+                r#type: (*req_type).into(),
                 source: Source::Debuginfod.into(),
                 upload: None,
                 quality: None,

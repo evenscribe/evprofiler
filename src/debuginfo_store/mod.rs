@@ -77,7 +77,6 @@ impl DebuginfoService for DebuginfoStore {
     ) -> Result<Response<UploadResponse>, Status> {
         let mut stream = request.into_inner();
 
-        // Handle initial request
         let request = match stream.message().await {
             Ok(Some(msg)) => msg,
             Ok(None) => return Err(Status::invalid_argument("Empty request")),
@@ -95,7 +94,6 @@ impl DebuginfoService for DebuginfoStore {
         let upload_info = UploadRequestInfo::try_from(data)?;
         let _ = self.validate_buildid(&upload_info.buildid)?;
 
-        // Acquire metadata lock and perform validation
         let dbginfo = {
             let metadata = self
                 .metadata
@@ -109,10 +107,9 @@ impl DebuginfoService for DebuginfoStore {
                 "metadata not found, this indicates that the upload was not previously initiated"
             )
                 })?
-                .clone() // Clone the data so we can release the lock
+                .clone()
         };
 
-        // Validate upload information
         let upload = dbginfo.upload.ok_or_else(|| {
             Status::invalid_argument(
                 "metadata not found, this indicates that the upload was not previously initiated",
@@ -125,7 +122,6 @@ impl DebuginfoService for DebuginfoStore {
         ));
         }
 
-        // Collect chunks
         let mut chunks = Vec::new();
         while let Some(req) = stream.next().await {
             let req = req?;
@@ -143,7 +139,6 @@ impl DebuginfoService for DebuginfoStore {
 
         let size = chunks.len() as u64;
 
-        // Acquire bucket lock only when needed and release quickly
         {
             let mut bucket = self
                 .bucket
@@ -168,13 +163,18 @@ impl DebuginfoService for DebuginfoStore {
         let request = request.into_inner();
         let _ = self.validate_buildid(&request.build_id)?;
 
-        let metadata = self
-            .metadata
-            .lock()
-            .map_err(|_| Status::internal("Failed to lock metadata"))?;
+        let debuginfo = {
+            let metadata = self
+                .metadata
+                .lock()
+                .map_err(|_| Status::internal("Failed to lock metadata"))?;
+            metadata
+                .fetch(&request.build_id, &request.r#type())
+                .cloned()
+        };
 
-        match metadata.fetch(&request.build_id, &request.r#type()) {
-            Some(debuginfo) => self.handle_existing_debuginfo(&request, &debuginfo),
+        match debuginfo {
+            Some(info) => self.handle_existing_debuginfo(&request, &info),
             None => self.handle_new_build_id(&request),
         }
     }
@@ -370,17 +370,22 @@ impl DebuginfoStore {
             }));
         }
 
-        let exists = self
-            .debuginfod
-            .lock()
-            .map_err(|_| Status::internal("Failed to lock debuginfod"))?
-            .exists(&request.build_id);
+        let exists = {
+            let mut debuginfod = self
+                .debuginfod
+                .lock()
+                .map_err(|_| Status::internal("Failed to lock debuginfod"))?;
+            debuginfod.exists(&request.build_id)
+        };
 
         if exists {
-            self.metadata
-                .lock()
-                .map_err(|_| Status::internal("Failed to lock metadata"))?
-                .mark(&request.build_id, &request.r#type());
+            {
+                let mut metadata = self
+                    .metadata
+                    .lock()
+                    .map_err(|_| Status::internal("Failed to lock metadata"))?;
+                metadata.mark(&request.build_id, &request.r#type());
+            }
 
             Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: false,

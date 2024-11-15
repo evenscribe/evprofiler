@@ -1,6 +1,5 @@
 use std::{collections::HashMap, time::Duration};
 use tonic::Status;
-use ureq;
 use url::Url;
 
 pub struct DebugInfod {
@@ -25,10 +24,7 @@ impl DebugInfod {
     }
 
     pub fn exists(&mut self, build_id: &str) -> bool {
-        match self.get(build_id) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        self.get(build_id).is_ok()
     }
 
     pub fn get(&mut self, build_id: &str) -> Result<&[u8], Status> {
