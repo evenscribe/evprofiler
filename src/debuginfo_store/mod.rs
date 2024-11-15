@@ -132,9 +132,9 @@ impl DebuginfoStore {
         request: &ShouldInitiateUploadRequest,
         debuginfo: &Debuginfo,
     ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
-        match Source::from_i32(debuginfo.source) {
-            Some(Source::Upload) => self.handle_upload_source(request, debuginfo),
-            Some(Source::Debuginfod) => self.handle_debuginfod_source(debuginfo),
+        match Source::try_from(debuginfo.source) {
+            Ok(Source::Debuginfod) => self.handle_debuginfod_source(debuginfo),
+            Ok(Source::Upload) => self.handle_upload_source(request, debuginfo),
             _ => Err(Status::internal("Inconsistent metadata: unknown source")),
         }
     }
@@ -149,9 +149,9 @@ impl DebuginfoStore {
             .as_ref()
             .ok_or_else(|| Status::internal("Inconsistent metadata: missing upload info"))?;
 
-        match State::from_i32(upload.state) {
-            Some(State::Uploading) => self.handle_uploading_state(upload),
-            Some(State::Uploaded) => self.handle_uploaded_state(request, debuginfo),
+        match State::try_from(upload.state) {
+            Ok(State::Uploading) => self.handle_uploading_state(upload),
+            Ok(State::Uploaded) => self.handle_uploaded_state(request, debuginfo),
             _ => Err(Status::internal(
                 "Inconsistent metadata: unknown upload state",
             )),
