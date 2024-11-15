@@ -1,6 +1,9 @@
 mod debuginfod;
 mod metadata;
 
+use self::debuginfopb::debuginfo_upload::State;
+use self::debuginfopb::upload_request;
+use self::debuginfopb::{DebuginfoType, DebuginfoUpload};
 use crate::debuginfopb::debuginfo::Source;
 use crate::debuginfopb::debuginfo_service_server::DebuginfoService;
 use crate::debuginfopb::Debuginfo;
@@ -12,11 +15,11 @@ use crate::debuginfopb::{
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use debuginfod::DebugInfod;
 use metadata::MetadataStore;
+use std::collections::HashMap;
+use std::result::Result;
 use std::sync::{Arc, Mutex};
-use tonic::{async_trait, Response, Status};
-
-use self::debuginfopb::debuginfo_upload::State;
-use self::debuginfopb::DebuginfoUpload;
+use tokio_stream::StreamExt;
+use tonic::{async_trait, Request, Response, Status, Streaming};
 
 const REASON_DEBUGINFO_IN_DEBUGINFOD: &str =
     "Debuginfo exists in debuginfod, therefore no upload is necessary.";
@@ -35,18 +38,34 @@ const REASON_DEBUGINFO_NOT_EQUAL: &str =
 const REASON_DEBUGINFOD_SOURCE: &str = "Debuginfo is available from debuginfod already and not marked as invalid, therefore no new upload is needed.";
 const REASON_DEBUGINFOD_INVALID: &str = "Debuginfo is available from debuginfod already but is marked as invalid, therefore a new upload is needed.";
 
+pub struct UploadRequestInfo {
+    buildid: String,
+    upload_id: String,
+    debuginfo_type: DebuginfoType,
+}
+
+impl TryFrom<upload_request::Data> for UploadRequestInfo {
+    type Error = Status;
+    fn try_from(data: upload_request::Data) -> Result<Self, Self::Error> {
+        match data {
+            upload_request::Data::Info(upload_info) => Ok(Self {
+                buildid: upload_info.build_id,
+                upload_id: upload_info.upload_id,
+                debuginfo_type: match DebuginfoType::try_from(upload_info.r#type) {
+                    Ok(t) => t,
+                    Err(_) => return Err(Status::invalid_argument("Invalid debuginfo type.")),
+                },
+            }),
+            _ => Err(Status::invalid_argument("Invalid data type.")),
+        }
+    }
+}
+
 pub struct DebuginfoStore {
     metadata: Arc<Mutex<MetadataStore>>,
     debuginfod: Arc<Mutex<DebugInfod>>,
     max_upload_duration: Duration,
-}
-
-fn validate_input(id: &str) -> Result<(), Status> {
-    if id.len() <= 2 {
-        return Err(Status::invalid_argument("unexpectedly short input"));
-    }
-
-    Ok(())
+    bucket: Arc<Mutex<HashMap<String, Vec<u8>>>>,
 }
 
 #[async_trait]
@@ -54,9 +73,89 @@ impl DebuginfoService for DebuginfoStore {
     /// Upload ingests debug info for a given build_id
     async fn upload(
         &self,
-        request: tonic::Request<tonic::Streaming<UploadRequest>>,
-    ) -> std::result::Result<Response<UploadResponse>, Status> {
-        Ok(Response::new(UploadResponse::default()))
+        request: Request<Streaming<UploadRequest>>,
+    ) -> Result<Response<UploadResponse>, Status> {
+        let mut stream = request.into_inner();
+
+        // Handle initial request
+        let request = match stream.message().await {
+            Ok(Some(msg)) => msg,
+            Ok(None) => return Err(Status::invalid_argument("Empty request")),
+            Err(e) => {
+                return Err(Status::internal(format!(
+                    "Failed to receive message: {}",
+                    e
+                )))
+            }
+        };
+
+        let data = request
+            .data
+            .ok_or_else(|| Status::invalid_argument("Missing data"))?;
+        let upload_info = UploadRequestInfo::try_from(data)?;
+        let _ = self.validate_buildid(&upload_info.buildid)?;
+
+        // Acquire metadata lock and perform validation
+        let dbginfo = {
+            let metadata = self
+                .metadata
+                .lock()
+                .map_err(|_| Status::internal("Failed to lock metadata"))?;
+
+            metadata
+                .fetch(&upload_info.buildid, &upload_info.debuginfo_type)
+                .ok_or_else(|| {
+                    Status::failed_precondition(
+                "metadata not found, this indicates that the upload was not previously initiated"
+            )
+                })?
+                .clone() // Clone the data so we can release the lock
+        };
+
+        // Validate upload information
+        let upload = dbginfo.upload.ok_or_else(|| {
+            Status::invalid_argument(
+                "metadata not found, this indicates that the upload was not previously initiated",
+            )
+        })?;
+
+        if upload.id.ne(&upload_info.upload_id) {
+            return Err(Status::failed_precondition(
+            "upload metadata not found, this indicates that the upload was not previously initiated"
+        ));
+        }
+
+        // Collect chunks
+        let mut chunks = Vec::new();
+        while let Some(req) = stream.next().await {
+            let req = req?;
+            match req.data {
+                Some(upload_request::Data::ChunkData(chunk)) => {
+                    chunks.extend(chunk);
+                }
+                _ => {
+                    return Err(Status::invalid_argument(
+                        "provided no value or invalid data",
+                    ))
+                }
+            }
+        }
+
+        let size = chunks.len() as u64;
+
+        // Acquire bucket lock only when needed and release quickly
+        {
+            let mut bucket = self
+                .bucket
+                .lock()
+                .map_err(|_| Status::internal("Failed to lock bucket"))?;
+            bucket.insert(upload_info.upload_id, chunks);
+        }
+
+        Ok(Response::new(UploadResponse {
+            build_id: upload_info.buildid,
+            size,
+        }))
     }
 
     // ShouldInitiateUpload returns whether an upload should be initiated for the
@@ -64,38 +163,34 @@ impl DebuginfoService for DebuginfoStore {
     // parca-agent to avoid extracting debuginfos unnecessarily from a binary.
     async fn should_initiate_upload(
         &self,
-        request: tonic::Request<ShouldInitiateUploadRequest>,
-    ) -> std::result::Result<Response<ShouldInitiateUploadResponse>, Status> {
+        request: Request<ShouldInitiateUploadRequest>,
+    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
         let request = request.into_inner();
-        validate_input(&request.build_id)?;
+        let _ = self.validate_buildid(&request.build_id)?;
 
-        let mut metadata = self
+        let metadata = self
             .metadata
             .lock()
             .map_err(|_| Status::internal("Failed to lock metadata"))?;
-        let mut debuginfod = self
-            .debuginfod
-            .lock()
-            .map_err(|_| Status::internal("Failed to lock debuginfod"))?;
 
         match metadata.fetch(&request.build_id, &request.r#type()) {
             Some(debuginfo) => self.handle_existing_debuginfo(&request, &debuginfo),
-            None => self.handle_new_build_id(&request, &mut metadata, &mut debuginfod),
+            None => self.handle_new_build_id(&request),
         }
     }
 
     /// InitiateUpload returns a strategy and information to upload debug info for a given build_id.
     async fn initiate_upload(
         &self,
-        request: tonic::Request<InitiateUploadRequest>,
-    ) -> std::result::Result<Response<InitiateUploadResponse>, Status> {
+        request: Request<InitiateUploadRequest>,
+    ) -> Result<Response<InitiateUploadResponse>, Status> {
         Ok(Response::new(InitiateUploadResponse::default()))
     }
     /// MarkUploadFinished marks the upload as finished for a given build_id.
     async fn mark_upload_finished(
         &self,
-        request: tonic::Request<MarkUploadFinishedRequest>,
-    ) -> std::result::Result<Response<MarkUploadFinishedResponse>, Status> {
+        request: Request<MarkUploadFinishedRequest>,
+    ) -> Result<Response<MarkUploadFinishedResponse>, Status> {
         Ok(Response::new(MarkUploadFinishedResponse::default()))
     }
 }
@@ -106,7 +201,16 @@ impl DebuginfoStore {
             metadata: Arc::new(Mutex::new(MetadataStore::default())),
             debuginfod: Arc::new(Mutex::new(DebugInfod::default())),
             max_upload_duration: Duration::minutes(15),
+            bucket: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn validate_buildid(&self, id: &str) -> Result<(), Status> {
+        if id.len() <= 2 {
+            return Err(Status::invalid_argument("unexpectedly short input"));
+        }
+
+        Ok(())
     }
 
     fn is_upload_stale(&self, upload: &DebuginfoUpload) -> bool {
@@ -255,23 +359,38 @@ impl DebuginfoStore {
     fn handle_new_build_id(
         &self,
         request: &ShouldInitiateUploadRequest,
-        metadata: &mut MetadataStore,
-        debuginfod: &mut DebugInfod,
     ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
-        match request.build_id_type() {
+        if !matches!(
+            request.build_id_type(),
             BuildIdType::Gnu | BuildIdType::UnknownUnspecified
-                if debuginfod.exists(&request.build_id) =>
-            {
-                metadata.mark(&request.build_id, &request.r#type());
-                Ok(Response::new(ShouldInitiateUploadResponse {
-                    should_initiate_upload: false,
-                    reason: REASON_DEBUGINFO_IN_DEBUGINFOD.into(),
-                }))
-            }
-            _ => Ok(Response::new(ShouldInitiateUploadResponse {
+        ) {
+            return Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: true,
                 reason: REASON_FIRST_TIME_SEEN.into(),
-            })),
+            }));
+        }
+
+        let exists = self
+            .debuginfod
+            .lock()
+            .map_err(|_| Status::internal("Failed to lock debuginfod"))?
+            .exists(&request.build_id);
+
+        if exists {
+            self.metadata
+                .lock()
+                .map_err(|_| Status::internal("Failed to lock metadata"))?
+                .mark(&request.build_id, &request.r#type());
+
+            Ok(Response::new(ShouldInitiateUploadResponse {
+                should_initiate_upload: false,
+                reason: REASON_DEBUGINFO_IN_DEBUGINFOD.into(),
+            }))
+        } else {
+            Ok(Response::new(ShouldInitiateUploadResponse {
+                should_initiate_upload: true,
+                reason: REASON_FIRST_TIME_SEEN.into(),
+            }))
         }
     }
 }
