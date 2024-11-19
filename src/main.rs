@@ -9,6 +9,8 @@ mod debuginfo_store;
 mod normalizer;
 mod profile;
 mod profile_store;
+mod symbolizer;
+mod symbols;
 
 pub(crate) mod profilestorepb {
     tonic::include_proto!("parca.profilestore.v1alpha1");
