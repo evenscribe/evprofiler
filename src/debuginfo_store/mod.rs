@@ -1,20 +1,20 @@
 mod debuginfod;
+mod fetcher;
 mod metadata;
 
-use self::debuginfopb::debuginfo_upload::State;
-use self::debuginfopb::upload_request;
-use self::debuginfopb::{DebuginfoType, DebuginfoUpload};
-use crate::debuginfopb::debuginfo::Source;
-use crate::debuginfopb::debuginfo_service_server::DebuginfoService;
-use crate::debuginfopb::Debuginfo;
+use self::debuginfopb::{
+    debuginfo_upload::State, upload_instructions::UploadStrategy, upload_request, DebuginfoType,
+    DebuginfoUpload, ShouldInitiateUploadRequest, UploadInstructions,
+};
 use crate::debuginfopb::{
-    self, BuildIdType, InitiateUploadRequest, InitiateUploadResponse, MarkUploadFinishedRequest,
-    MarkUploadFinishedResponse, ShouldInitiateUploadRequest, ShouldInitiateUploadResponse,
-    UploadRequest, UploadResponse,
+    self, debuginfo::Source, debuginfo_service_server::DebuginfoService, BuildIdType, Debuginfo,
+    InitiateUploadRequest, InitiateUploadResponse, MarkUploadFinishedRequest,
+    MarkUploadFinishedResponse, ShouldInitiateUploadResponse, UploadRequest, UploadResponse,
 };
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use debuginfod::DebugInfod;
-use metadata::MetadataStore;
+pub use debuginfod::DebugInfod;
+pub use fetcher::DebuginfoFetcher;
+pub use metadata::MetadataStore;
 use std::collections::HashMap;
 use std::result::Result;
 use std::sync::{Arc, Mutex};
@@ -65,7 +65,8 @@ pub struct DebuginfoStore {
     metadata: Arc<Mutex<MetadataStore>>,
     debuginfod: Arc<Mutex<DebugInfod>>,
     max_upload_duration: Duration,
-    bucket: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    max_upload_size: i64,
+    bucket: Arc<Mutex<HashMap<String, Arc<Vec<u8>>>>>,
 }
 
 #[async_trait]
@@ -144,7 +145,7 @@ impl DebuginfoService for DebuginfoStore {
                 .bucket
                 .lock()
                 .map_err(|_| Status::internal("Failed to lock bucket"))?;
-            bucket.insert(upload_info.upload_id, chunks);
+            bucket.insert(upload_info.upload_id, Arc::new(chunks));
         }
 
         Ok(Response::new(UploadResponse {
@@ -184,13 +185,85 @@ impl DebuginfoService for DebuginfoStore {
         &self,
         request: Request<InitiateUploadRequest>,
     ) -> Result<Response<InitiateUploadResponse>, Status> {
-        Ok(Response::new(InitiateUploadResponse::default()))
+        let request = request.into_inner();
+
+        if request.hash.is_empty() {
+            return Err(Status::invalid_argument("Hash is empty"));
+        }
+
+        if request.size == 0 {
+            return Err(Status::invalid_argument("Size is zero"));
+        }
+
+        let siup = ShouldInitiateUploadRequest {
+            build_id: request.build_id.clone(),
+            hash: request.hash.clone(),
+            force: request.force,
+            r#type: request.r#type().into(),
+            build_id_type: request.build_id_type,
+        };
+
+        let should_initiate = self.should_initiate_upload(Request::new(siup)).await?;
+        let should_initiate = should_initiate.into_inner();
+
+        if !should_initiate.should_initiate_upload {
+            unimplemented!()
+        }
+
+        if request.size > self.max_upload_size {
+            return Err(Status::invalid_argument(format!(
+                "Upload size {} exceeds the maximum allowed size {}",
+                request.size, self.max_upload_size,
+            )));
+        }
+
+        let upload_id = ulid::Ulid::new().to_string();
+        let upload_started = self.time_now();
+        // let upload_expired = upload_started + self.max_upload_duration;
+
+        {
+            let mut metadata = self
+                .metadata
+                .lock()
+                .map_err(|_| Status::internal("Failed to lock metadata"))?;
+            let _ = metadata.mark_as_uploading(
+                &request.build_id,
+                &upload_id,
+                &request.hash,
+                &request.r#type(),
+                upload_started,
+            )?;
+        }
+
+        Ok(Response::new(InitiateUploadResponse {
+            upload_instructions: Some(UploadInstructions {
+                upload_id,
+                build_id: request.build_id,
+                upload_strategy: UploadStrategy::Grpc.into(),
+                signed_url: "".into(),
+                r#type: request.r#type,
+            }),
+        }))
     }
     /// MarkUploadFinished marks the upload as finished for a given build_id.
     async fn mark_upload_finished(
         &self,
         request: Request<MarkUploadFinishedRequest>,
     ) -> Result<Response<MarkUploadFinishedResponse>, Status> {
+        let request = request.into_inner();
+        let _ = self.validate_buildid(&request.build_id)?;
+        {
+            let mut metadata = self
+                .metadata
+                .lock()
+                .map_err(|_| Status::internal("Failed to lock metadata"))?;
+            let _ = metadata.mark_as_uploaded(
+                &request.build_id,
+                &request.upload_id,
+                &request.r#type(),
+                self.time_now(),
+            )?;
+        }
         Ok(Response::new(MarkUploadFinishedResponse::default()))
     }
 }
@@ -202,6 +275,7 @@ impl DebuginfoStore {
             debuginfod: Arc::new(Mutex::new(DebugInfod::default())),
             max_upload_duration: Duration::minutes(15),
             bucket: Arc::new(Mutex::new(HashMap::new())),
+            max_upload_size: 1000000000,
         }
     }
 
@@ -378,13 +452,17 @@ impl DebuginfoStore {
             debuginfod.exists(&request.build_id)
         };
 
-        if exists {
+        if !exists.is_empty() {
             {
                 let mut metadata = self
                     .metadata
                     .lock()
                     .map_err(|_| Status::internal("Failed to lock metadata"))?;
-                metadata.mark(&request.build_id, &request.r#type());
+                let _ = metadata.mark_as_debuginfod_source(
+                    exists,
+                    &request.build_id,
+                    &request.r#type(),
+                );
             }
 
             Ok(Response::new(ShouldInitiateUploadResponse {
