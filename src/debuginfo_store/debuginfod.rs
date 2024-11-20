@@ -5,7 +5,7 @@ use url::Url;
 #[derive(Debug)]
 pub struct DebugInfod {
     pub upstream_servers: Vec<Url>,
-    bucket: HashMap<String, Arc<Vec<u8>>>,
+    bucket: HashMap<String, Vec<u8>>,
     client: ureq::Agent,
 }
 
@@ -38,7 +38,7 @@ impl DebugInfod {
         available_servers
     }
 
-    pub fn get(&mut self, upstream_server: &Url, build_id: &str) -> Result<Arc<Vec<u8>>, Status> {
+    pub fn get(&mut self, upstream_server: &Url, build_id: &str) -> Result<&[u8], Status> {
         self.debuginfo_request(upstream_server, build_id)
     }
 
@@ -46,7 +46,7 @@ impl DebugInfod {
         &mut self,
         upstream_server: &Url,
         build_id: &str,
-    ) -> Result<Arc<Vec<u8>>, Status> {
+    ) -> Result<&[u8], Status> {
         let url = upstream_server
             .join(format!("buildid/{}/debuginfo", build_id).as_str())
             .unwrap();
@@ -54,39 +54,30 @@ impl DebugInfod {
         self.request(url)
     }
 
-    fn request(&mut self, url: Url) -> Result<Arc<Vec<u8>>, Status> {
-        // If we have cached data, return a clone of the Arc
-        if let Some(cached_data) = self.bucket.get(url.as_str()) {
-            return Ok(Arc::clone(cached_data));
+    fn request(&mut self, url: Url) -> Result<&[u8], Status> {
+        if self.bucket.get(url.as_str()).is_none() {
+            let response =
+                self.client.get(url.as_str()).call().map_err(|err| {
+                    Status::internal(format!("Failed to fetch debuginfo: {}", err))
+                })?;
+
+            if response.status() == 200 {
+                let mut content = Vec::new();
+                response
+                    .into_reader()
+                    .read_to_end(&mut content)
+                    .map_err(|e| Status::internal(format!("Failed to read response: {}", e)))?;
+
+                self.bucket.insert(url.to_string(), content);
+            } else {
+                return Err(Status::internal(format!(
+                    "Failed to fetch debuginfo: {}",
+                    response.status()
+                )));
+            }
         }
 
-        // Otherwise fetch new data
-        let response = self
-            .client
-            .get(url.as_str())
-            .call()
-            .map_err(|err| Status::internal(format!("Failed to fetch debuginfo: {}", err)))?;
-
-        if response.status() == 200 {
-            // Read the content
-            let mut content = Vec::new();
-            response
-                .into_reader()
-                .read_to_end(&mut content)
-                .map_err(|e| Status::internal(format!("Failed to read response: {}", e)))?;
-
-            // Wrap in Arc and store in bucket
-            let content_arc = Arc::new(content);
-            self.bucket
-                .insert(url.to_string(), Arc::clone(&content_arc));
-
-            Ok(content_arc)
-        } else {
-            Err(Status::internal(format!(
-                "Failed to fetch debuginfo: {}",
-                response.status()
-            )))
-        }
+        Ok(self.bucket.get(url.as_str()).unwrap())
     }
 }
 

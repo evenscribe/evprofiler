@@ -7,19 +7,19 @@ use std::{
 
 #[derive(Debug, Default)]
 pub struct DebuginfoFetcher {
-    bucket: Arc<Mutex<HashMap<String, Arc<Vec<u8>>>>>,
+    bucket: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     debuginfod: Arc<Mutex<DebugInfod>>,
 }
 
 impl DebuginfoFetcher {
     pub fn new(
-        bucket: Arc<Mutex<HashMap<String, Arc<Vec<u8>>>>>,
+        bucket: Arc<Mutex<HashMap<String, Vec<u8>>>>,
         debuginfod: Arc<Mutex<DebugInfod>>,
     ) -> Self {
         Self { bucket, debuginfod }
     }
 
-    pub fn fetch_debug_info(&self, dbginfo: &Debuginfo) -> Result<Arc<Vec<u8>>, tonic::Status> {
+    pub fn fetch_debug_info(&self, dbginfo: &Debuginfo) -> Result<Vec<u8>, tonic::Status> {
         let source = dbginfo.source();
         match source {
             Source::Debuginfod => self.fetch_debuginfod(dbginfo),
@@ -28,7 +28,7 @@ impl DebuginfoFetcher {
         }
     }
 
-    fn fetch_debuginfod(&self, dbginfo: &Debuginfo) -> Result<Arc<Vec<u8>>, tonic::Status> {
+    fn fetch_debuginfod(&self, dbginfo: &Debuginfo) -> Result<Vec<u8>, tonic::Status> {
         let mut debuginfod = match self.debuginfod.lock() {
             Ok(debuginfod) => debuginfod,
             Err(_) => return Err(tonic::Status::internal("Failed to lock DebugInfod")),
@@ -36,17 +36,17 @@ impl DebuginfoFetcher {
 
         let servers = debuginfod.upstream_servers.clone();
         let rc = debuginfod.get(&servers[0], dbginfo.build_id.as_str())?;
-        return Ok(Arc::clone(&rc));
+        return Ok(rc.to_vec());
     }
 
-    fn fetch_bucket(&self, dbginfo: &Debuginfo) -> Result<Arc<Vec<u8>>, tonic::Status> {
+    fn fetch_bucket(&self, dbginfo: &Debuginfo) -> Result<Vec<u8>, tonic::Status> {
         let bucket = match self.bucket.lock() {
             Ok(bucket) => bucket,
             Err(_) => return Err(tonic::Status::internal("Failed to lock bucket")),
         };
         let path = &dbginfo.upload.as_ref().unwrap().id;
         if let Some(rc) = bucket.get(path) {
-            return Ok(Arc::clone(rc));
+            return Ok(rc.clone());
         }
         Err(tonic::Status::internal("No data found in bucket"))
     }
