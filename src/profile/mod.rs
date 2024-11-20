@@ -1,4 +1,5 @@
 mod encode;
+pub mod executableinfo;
 pub mod schema;
 
 use crate::metapb::{Function, Mapping};
