@@ -3,7 +3,8 @@ use tonic::Status;
 
 use crate::profile::executableinfo::{ExecutableInfo, Mapping};
 
-pub struct NormalizedAddress(u64);
+#[derive(Debug, Clone, Copy)]
+pub struct NormalizedAddress(pub(crate) u64);
 
 impl NormalizedAddress {
     pub(crate) fn try_new(addr: u64, ei: &ExecutableInfo, m: &Mapping) -> Result<Self, Status> {

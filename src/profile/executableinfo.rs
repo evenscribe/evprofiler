@@ -1,8 +1,6 @@
-use crate::symbolizer::ElfFile;
-use elf::{
-    abi::{PF_X, PT_LOAD},
-    endian::AnyEndian,
-    segment::ProgramHeader,
+use object::{
+    elf::PF_X, File, Object, ObjectKind, ObjectSection, ObjectSegment, SegmentFlags,
+    SegmentIterator,
 };
 use tonic::Status;
 
@@ -21,7 +19,7 @@ pub struct Mapping {
 }
 
 pub struct ExecutableInfo {
-    pub(crate) elf_type: u16,
+    pub(crate) elf_type: ObjectKind,
     text_prog_hdr_indx: i16,
     prog_headers: Vec<ProgHeader>,
 }
@@ -146,58 +144,49 @@ fn header_for_file_offset(
     }
 }
 
-impl TryFrom<&ElfFile<AnyEndian>> for ExecutableInfo {
+impl TryFrom<&File<'_>> for ExecutableInfo {
     type Error = Status;
-    fn try_from(e: &ElfFile<AnyEndian>) -> Result<Self, Self::Error> {
-        let prog_headers = match e.elf.segments() {
-            Some(segments) => segments.iter().collect(),
-            None => vec![],
-        };
+    fn try_from(e: &File<'_>) -> Result<Self, Self::Error> {
+        let idx = find_text_prog_hdr(e);
 
-        let text_prog_hdr_indx = find_text_prog_hdr(e, &prog_headers);
+        let mut prog_headers: Vec<ProgHeader> = vec![];
 
-        let mut prof_headers_ = vec![];
-        prog_headers.iter().enumerate().for_each(|(_, header)| {
-            prof_headers_.push(ProgHeader {
-                offset: header.p_offset,
-                vaddr: header.p_vaddr,
-                memsz: header.p_memsz,
+        let segments = e.segments();
+        for segment in segments {
+            prog_headers.push(ProgHeader {
+                offset: segment.file_range().0,
+                vaddr: segment.address(),
+                memsz: segment.size(),
             });
-        });
+        }
 
         Ok(ExecutableInfo {
-            elf_type: e.elf.ehdr.e_type,
-            text_prog_hdr_indx,
-            prog_headers: prof_headers_,
+            elf_type: e.kind(),
+            text_prog_hdr_indx: idx,
+            prog_headers,
         })
     }
 }
 
-pub fn find_text_prog_hdr(e: &ElfFile<AnyEndian>, prog_headers: &[ProgramHeader]) -> i16 {
-    let (shdrs_opt, strtab_opt) = e
-        .elf
-        .section_headers_with_strtab()
-        .expect("shdrs offsets should be valid");
-    let (shdrs, strtab) = (
-        shdrs_opt.expect("Should have shdrs"),
-        strtab_opt.expect("Should have strtab"),
-    );
+/// find_text_prog_hdr inds the program segment header containing the .text
+//. section or -1 if the segment cannot be found.
+pub fn find_text_prog_hdr(e: &File<'_>) -> i16 {
+    let segments = e.segments();
+    if let Some(section) = e.section_by_name(".text") {
+        for (indx, segment) in segments.enumerate() {
+            if let SegmentFlags::Elf { p_flags } = segment.flags() {
+                let section_addr = section.address();
+                let segment_addr = segment.address();
+                let segment_size = segment.size();
 
-    for shdr in shdrs.iter() {
-        if let Ok(name) = strtab.get(shdr.sh_name as usize) {
-            if name == ".text" {
-                for (idx, header) in prog_headers.iter().enumerate() {
-                    if header.p_type == PT_LOAD
-                        && header.p_flags & PF_X != 0
-                        && shdr.sh_addr >= header.p_vaddr
-                        && shdr.sh_addr < header.p_vaddr + header.p_memsz
-                    {
-                        return idx as i16;
-                    }
+                if p_flags & PF_X != 0
+                    && section_addr >= segment_addr
+                    && section_addr < segment_addr + segment_size
+                {
+                    return indx as i16;
                 }
             }
         }
     }
-
-    return -1;
+    -1
 }
