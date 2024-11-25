@@ -22,6 +22,8 @@ cpp_demangle = "0.4.4"
 rustc-demangle = "0.1.24"
 tempfile = "3.14.0"
 object = "0.36.5"
+gimli = "0.31.1"
+addr2line = "0.24.2"
 
 [build-dependencies]
 tonic-build = "0.12.3"

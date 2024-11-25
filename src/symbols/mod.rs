@@ -1,4 +1,4 @@
-mod addr_to_line;
+pub mod addr_to_line;
 mod demangle;
 pub mod elfutils;
 
