@@ -8,8 +8,6 @@ use tonic::{Request, Response, Status, Streaming};
 #[derive(Debug, Default)]
 pub struct ProfileStore {}
 
-impl ProfileStore {}
-
 #[tonic::async_trait]
 impl ProfileStoreService for ProfileStore {
     /// WriteRaw accepts a raw set of bytes of a pprof file
@@ -53,8 +51,18 @@ impl ProfileStoreService for ProfileStore {
 
 impl ProfileStore {
     pub fn write_series(&self, request: &WriteRawRequest) -> Result<(), Status> {
-        let record = normalizer::write_raw_request_to_arrow_record(request);
-        log::info!("Record: {:?}", record);
+        let record = match normalizer::write_raw_request_to_arrow_record(request) {
+            Ok(record) => record,
+            Err(e) => {
+                log::error!("{}", e);
+                return Err(Status::internal(e.to_string()));
+            }
+        };
+
+        if record.num_rows() == 0 {
+            return Ok(());
+        }
+
         Ok(())
     }
 }

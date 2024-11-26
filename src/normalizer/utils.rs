@@ -359,6 +359,7 @@ fn serialize_stacktrace(
 
 pub fn write_raw_request_to_arrow_record(request: &WriteRawRequest) -> Result<RecordBatch, Status> {
     let normalized_request = NormalizedWriteRawRequest::try_from(request)?;
+    log::info!("normalized_request: {:?}", normalized_request);
     let arrow_schema = schema::create_schema(&normalized_request.all_label_names);
 
     let mut duration_builder = Int64Builder::new();

@@ -149,7 +149,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_symbolizer() {
+    fn test_cpp_symbolizer() {
         let path =
             PathBuf::from("src/symbols/addr_to_line/testdata/basic-cpp-no-fp-with-debuginfo");
         let data = match std::fs::read(&path) {
@@ -163,9 +163,27 @@ mod tests {
         };
         let demangler = Demangler::new(false);
         let d = DwarfLiner::try_new(&elfdbginfo, &demangler).unwrap();
-        let lines = d
+        let _ = d
             .pc_to_lines(NormalizedAddress(0x0000000000401156))
             .unwrap();
-        println!("{:?}", lines);
+    }
+
+    #[test]
+    fn test_go_symbolizer() {
+        let path = PathBuf::from("src/symbols/addr_to_line/testdata/basic-go-with-debuginfo");
+        let data = match std::fs::read(&path) {
+            Ok(data) => data,
+            Err(e) => panic!("Failed to read file: {:?}", e),
+        };
+        let elfdbginfo = ElfDebugInfo {
+            target_path: path,
+            e: object::File::parse(&*data).unwrap(),
+            quality: None,
+        };
+        let demangler = Demangler::new(false);
+        let d = DwarfLiner::try_new(&elfdbginfo, &demangler).unwrap();
+        let _ = d
+            .pc_to_lines(NormalizedAddress(0x0000000000041290))
+            .unwrap();
     }
 }

@@ -1,6 +1,7 @@
-mod liner;
-mod normalize;
+pub mod liner;
+pub mod normalize;
 
+use self::debuginfopb::Debuginfo;
 use crate::debuginfo_store::DebuginfoFetcher;
 use crate::profile::LocationLine;
 use crate::symbols::{elfutils, Demangler};
@@ -20,8 +21,6 @@ use std::{
 };
 use tonic::Status;
 
-use self::debuginfopb::Debuginfo;
-
 #[derive(Default, Debug, Clone)]
 pub struct SymbolizerCache {
     pub(crate) c: HashMap<String, String>,
@@ -33,7 +32,7 @@ impl SymbolizerCache {
         build_id: &str,
         addr: &NormalizedAddress,
     ) -> Result<Option<Vec<LocationLine>>, Status> {
-        todo!()
+        Ok(None)
     }
 
     fn set(
@@ -42,12 +41,12 @@ impl SymbolizerCache {
         addr: &NormalizedAddress,
         clone: Vec<LocationLine>,
     ) -> Result<(), Status> {
-        todo!()
+        Ok(())
     }
 }
 
 pub struct Symbolizer {
-    demangler: Demangler,
+    pub(crate) demangler: Demangler,
     cache: SymbolizerCache,
     metadata: Arc<Mutex<MetadataStore>>,
     fetcher: DebuginfoFetcher,
@@ -64,9 +63,9 @@ pub struct SymbolizationRequest {
     mappings: Vec<SymbolizationRequestMappingAddrs<'static>>,
 }
 
-struct ElfDebugInfo<'a> {
+pub struct ElfDebugInfo<'data> {
     pub(crate) target_path: PathBuf,
-    pub(crate) e: object::File<'a>,
+    pub(crate) e: object::File<'data>,
     pub(crate) quality: Option<DebuginfoQuality>,
 }
 
@@ -109,7 +108,7 @@ impl Symbolizer {
         let raw_data = self.fetcher.fetch_raw_elf(&dbginfo)?;
         let elf_debug_info = self.get_debug_info(&request.build_id, &mut dbginfo, &raw_data)?;
 
-        let l = Liner::new(
+        let mut l = Liner::new(
             &request.build_id,
             &elf_debug_info,
             &self.cache,
@@ -142,8 +141,7 @@ impl Symbolizer {
                         file: String::new(),
                     },
                 )?;
-
-                location.lines = l.liner.unwrap().pc_to_lines(addr)?;
+                location.lines = l.pc_to_lines(addr)?;
             }
         }
 
@@ -156,7 +154,7 @@ impl Symbolizer {
                 return Err(Status::not_found("Not a valid ELF file"));
             }
 
-            if !q.has_dwarf && !q.has_go_pclntab && !(q.has_symtab || q.has_dynsym) {
+            if !(q.has_dwarf || q.has_go_pclntab || q.has_symtab || q.has_dynsym) {
                 return Err(Status::not_found("Check debuginfo quality."));
             }
         }
@@ -218,10 +216,10 @@ impl Symbolizer {
         dbginfo: &mut Debuginfo,
         in_data: &'a [u8],
     ) -> Result<ElfDebugInfo<'a>, Status> {
-        let target_path = self.create_and_write_temp_file(&in_data, build_id)?;
+        let target_path = self.create_and_write_temp_file(in_data, build_id)?;
 
         // Parse ELF file
-        let file = object::File::parse(&*in_data).map_err(|e| {
+        let file = object::File::parse(in_data).map_err(|e| {
             // Update quality on parse failure
             let quality = DebuginfoQuality {
                 not_valid_elf: true,
@@ -244,7 +242,7 @@ impl Symbolizer {
                 has_dynsym: elfutils::has_dynsym(&file),
             };
 
-            dbginfo.quality = Some(quality.clone());
+            dbginfo.quality = Some(quality);
             self.update_quality(&dbginfo.build_id, quality)?;
 
             // Validate the new quality
@@ -254,7 +252,7 @@ impl Symbolizer {
         Ok(ElfDebugInfo {
             target_path,
             e: file,
-            quality: dbginfo.quality.clone(),
+            quality: dbginfo.quality,
         })
     }
 }

@@ -62,11 +62,11 @@ impl TryFrom<upload_request::Data> for UploadRequestInfo {
 }
 
 pub struct DebuginfoStore {
-    metadata: Arc<Mutex<MetadataStore>>,
-    debuginfod: Arc<Mutex<DebugInfod>>,
-    max_upload_duration: Duration,
-    max_upload_size: i64,
-    bucket: Arc<Mutex<HashMap<String, Arc<Vec<u8>>>>>,
+    pub(crate) metadata: Arc<Mutex<MetadataStore>>,
+    pub(crate) debuginfod: Arc<Mutex<DebugInfod>>,
+    pub(crate) max_upload_duration: Duration,
+    pub(crate) max_upload_size: i64,
+    pub(crate) bucket: Arc<Mutex<HashMap<String, Vec<u8>>>>,
 }
 
 #[async_trait]
@@ -145,7 +145,7 @@ impl DebuginfoService for DebuginfoStore {
                 .bucket
                 .lock()
                 .map_err(|_| Status::internal("Failed to lock bucket"))?;
-            bucket.insert(upload_info.upload_id, Arc::new(chunks));
+            bucket.insert(upload_info.upload_id, chunks);
         }
 
         Ok(Response::new(UploadResponse {

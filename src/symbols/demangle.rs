@@ -37,6 +37,7 @@ impl Demangler {
             return new_function;
         }
 
+        new_function.name = function.system_name.clone();
         new_function
     }
 
