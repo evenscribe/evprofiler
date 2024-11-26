@@ -45,16 +45,14 @@ impl Demangler {
     // If any error occurs during demangling, the input string is returned.
     fn filter(sys_name: &str) -> String {
         //Try Demangling Rust
-        let _ = match rustc_demangle::try_demangle(sys_name) {
-            Ok(demangled) => return format!("{:#}", demangled),
-            Err(_) => (),
-        };
+        if let Ok(demangled) = rustc_demangle::try_demangle(sys_name) {
+            return format!("{:#}", demangled);
+        }
 
         //Try Demangling C/C++
-        let _ = match cpp_demangle::Symbol::new(sys_name) {
-            Ok(symbol) => return symbol.to_string(),
-            Err(_) => (),
-        };
+        if let Ok(symbol) = cpp_demangle::Symbol::new(sys_name) {
+            return symbol.to_string();
+        }
 
         sys_name.to_string()
     }

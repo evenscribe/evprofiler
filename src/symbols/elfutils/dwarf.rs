@@ -39,5 +39,5 @@ fn search_dwarf_sections(e: &File<'_>) -> bool {
         return true;
     }
 
-    return false;
+    false
 }

@@ -55,7 +55,7 @@ impl DebugInfod {
     }
 
     fn request(&mut self, url: Url) -> Result<&[u8], Status> {
-        if self.bucket.get(url.as_str()).is_none() {
+        if !self.bucket.contains_key(url.as_str()) {
             let response =
                 self.client.get(url.as_str()).call().map_err(|err| {
                     Status::internal(format!("Failed to fetch debuginfo: {}", err))

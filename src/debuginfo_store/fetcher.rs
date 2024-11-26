@@ -36,7 +36,7 @@ impl DebuginfoFetcher {
 
         let servers = debuginfod.upstream_servers.clone();
         let rc = debuginfod.get(&servers[0], dbginfo.build_id.as_str())?;
-        return Ok(rc.to_vec());
+        Ok(rc.to_vec())
     }
 
     fn fetch_bucket(&self, dbginfo: &Debuginfo) -> Result<Vec<u8>, tonic::Status> {

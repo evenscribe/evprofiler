@@ -51,10 +51,10 @@ impl ExecutableInfo {
         }
 
         if headers.len() == 1 {
-            return Ok(Some(headers.get(0).unwrap().clone()));
+            return Ok(Some(headers.first().unwrap().clone()));
         }
 
-        return header_for_file_offset(headers, addr - m.start + m.offset);
+        header_for_file_offset(headers, addr - m.start + m.offset)
     }
     /// ProgramHeadersForMapping returns the program segment headers that overlap
     /// the runtime mapping with file offset mapOff and memory size mapSz. We skip
@@ -139,8 +139,8 @@ fn header_for_file_offset(
     }
 
     match found {
-        Some(header) => return Ok(Some(header)),
-        None => return Err(Status::internal("No program header matches file offset")),
+        Some(header) => Ok(Some(header)),
+        None => Err(Status::internal("No program header matches file offset")),
     }
 }
 
@@ -181,7 +181,7 @@ pub fn find_text_prog_hdr(e: &File<'_>) -> i16 {
 
                 if p_flags & PF_X != 0
                     && section_addr >= segment_addr
-                    && section_addr < segment_addr + segment_size
+                    && section_addr < segment_addr + segment.size()
                 {
                     return indx as i16;
                 }

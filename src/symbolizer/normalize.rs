@@ -8,7 +8,7 @@ pub struct NormalizedAddress(pub(crate) u64);
 impl NormalizedAddress {
     pub(crate) fn try_new(addr: u64, ei: &ExecutableInfo, m: &Mapping) -> Result<Self, Status> {
         let base = calculate_base(addr, ei, m)?;
-        return Ok(NormalizedAddress(addr - base));
+        Ok(NormalizedAddress(addr - base))
     }
 }
 
@@ -20,7 +20,7 @@ fn calculate_base(addr: u64, ei: &ExecutableInfo, m: &Mapping) -> Result<u64, St
         None => return Ok(0),
     };
 
-    if m.start == 0 && m.offset == 0 && (m.end == !(0 as u64) || m.end == 0) {
+    if m.start == 0 && m.offset == 0 && (m.end == !(0_u64) || m.end == 0) {
         return Ok(0);
     }
 
