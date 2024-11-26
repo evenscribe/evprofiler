@@ -1,4 +1,3 @@
-use elf::abi::{ET_DYN, ET_EXEC, ET_REL};
 use tonic::Status;
 
 use crate::profile::executableinfo::{ExecutableInfo, Mapping};
@@ -26,8 +25,8 @@ fn calculate_base(addr: u64, ei: &ExecutableInfo, m: &Mapping) -> Result<u64, St
     }
 
     match ei.elf_type {
-        ET_EXEC => Ok(m.start - m.offset + h.offset - h.vaddr),
-        ET_REL => {
+        object::ObjectKind::Executable => Ok(m.start - m.offset + h.offset - h.vaddr),
+        object::ObjectKind::Relocatable => {
             if m.offset != 0 {
                 return Err(Status::invalid_argument(
                     "don't know how to handle mapping.Offset",
@@ -35,9 +34,9 @@ fn calculate_base(addr: u64, ei: &ExecutableInfo, m: &Mapping) -> Result<u64, St
             }
             Ok(h.vaddr - h.offset + m.start)
         }
-        ET_DYN => Ok(m.start - m.offset + h.offset - h.vaddr),
+        object::ObjectKind::Dynamic => Ok(m.start - m.offset + h.offset - h.vaddr),
         _ => Err(Status::internal(format!(
-            "don't know how to handle FileHeader.Type {}",
+            "don't know how to handle FileHeader.Type {:?}",
             ei.elf_type
         ))),
     }

@@ -19,7 +19,7 @@ impl DebuginfoFetcher {
         Self { bucket, debuginfod }
     }
 
-    pub fn fetch_debug_info(&self, dbginfo: &Debuginfo) -> Result<Vec<u8>, tonic::Status> {
+    pub fn fetch_raw_elf(&self, dbginfo: &Debuginfo) -> Result<Vec<u8>, tonic::Status> {
         let source = dbginfo.source();
         match source {
             Source::Debuginfod => self.fetch_debuginfod(dbginfo),
