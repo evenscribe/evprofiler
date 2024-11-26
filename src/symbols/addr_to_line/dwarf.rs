@@ -1,4 +1,4 @@
-use crate::symbolizer::{liner::LinerTrait, normalize::NormalizedAddress};
+use crate::symbolizer::normalize::NormalizedAddress;
 use crate::{metapb, profile, symbolizer::ElfDebugInfo, symbols::Demangler};
 use addr2line::LookupResult;
 use core::error;
@@ -10,12 +10,6 @@ pub struct DwarfLiner<'data> {
     elfdbginfo: &'data ElfDebugInfo<'data>,
     demangler: &'data Demangler,
     endian: gimli::RunTimeEndian,
-}
-
-impl<'data> LinerTrait for DwarfLiner<'data> {
-    fn pc_to_lines(&self, addr: NormalizedAddress) -> Result<Vec<profile::LocationLine>, Status> {
-        self.source_lines(addr.0)
-    }
 }
 
 impl<'data> DwarfLiner<'data> {
@@ -34,6 +28,13 @@ impl<'data> DwarfLiner<'data> {
             demangler,
             endian,
         })
+    }
+
+    pub fn pc_to_lines(
+        &self,
+        addr: NormalizedAddress,
+    ) -> Result<Vec<profile::LocationLine>, Status> {
+        self.source_lines(addr.0)
     }
 
     fn source_lines(&self, addr: u64) -> Result<Vec<profile::LocationLine>, Status> {
@@ -123,8 +124,8 @@ impl<'data> DwarfLiner<'data> {
             let func = self.demangler.demangle(&metapb::Function {
                 id: String::default(),
                 start_line,
-                name: name.into(),
-                system_name: String::default(),
+                name: String::default(),
+                system_name: name.into(),
                 filename: file.to_owned(),
                 name_string_index: 0,
                 system_name_string_index: 0,
@@ -138,5 +139,33 @@ impl<'data> DwarfLiner<'data> {
         }
 
         Ok(lines)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn test_symbolizer() {
+        let path =
+            PathBuf::from("src/symbols/addr_to_line/testdata/basic-cpp-no-fp-with-debuginfo");
+        let data = match std::fs::read(&path) {
+            Ok(data) => data,
+            Err(e) => panic!("Failed to read file: {:?}", e),
+        };
+        let elfdbginfo = ElfDebugInfo {
+            target_path: path,
+            e: object::File::parse(&*data).unwrap(),
+            quality: None,
+        };
+        let demangler = Demangler::new(false);
+        let d = DwarfLiner::try_new(&elfdbginfo, &demangler).unwrap();
+        let lines = d
+            .pc_to_lines(NormalizedAddress(0x0000000000401156))
+            .unwrap();
+        println!("{:?}", lines);
     }
 }
