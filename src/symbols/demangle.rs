@@ -22,11 +22,11 @@ impl Demangler {
     pub fn demangle(&self, function: &Function) -> Function {
         let mut new_function = function.clone();
 
-        if self.force && function.name.is_empty() && function.system_name.is_empty() {
+        if self.force && !function.name.is_empty() && !function.system_name.is_empty() {
             new_function.name = function.system_name.clone();
         }
 
-        if function.name.is_empty() && function.system_name.eq(&function.name) {
+        if !function.name.is_empty() && !function.system_name.eq(&function.name) {
             return new_function; // Already Demangled
         }
 
@@ -46,7 +46,7 @@ impl Demangler {
     fn filter(sys_name: &str) -> String {
         //Try Demangling Rust
         let _ = match rustc_demangle::try_demangle(sys_name) {
-            Ok(demangled) => return demangled.to_string(),
+            Ok(demangled) => return format!("{:#}", demangled),
             Err(_) => (),
         };
 
@@ -57,5 +57,63 @@ impl Demangler {
         };
 
         sys_name.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_already_demangled() {
+        let demangler = Demangler::new(false);
+        let function = Function {
+            id: String::default(),
+            start_line: 0,
+            name: "main".to_string(),
+            system_name: "main".to_string(),
+            filename: "main.c".to_string(),
+            name_string_index: 0,
+            system_name_string_index: 0,
+            filename_string_index: 0,
+        };
+        assert_eq!(function, demangler.demangle(&function));
+    }
+
+    #[test]
+    fn test_cpp() {
+        let demangler = Demangler::new(false);
+        let function = Function {
+            id: String::default(),
+            start_line: 0,
+            name: "".to_string(),
+            system_name: "_ZNSaIcEC1ERKS_".to_string(),
+            filename: "".to_string(),
+            name_string_index: 0,
+            system_name_string_index: 0,
+            filename_string_index: 0,
+        };
+        let demangled = demangler.demangle(&function);
+        assert_eq!(
+            "std::allocator<char>::allocator(std::allocator<char> const&)",
+            demangled.name
+        );
+    }
+
+    #[test]
+    fn test_rust() {
+        let demangler = Demangler::new(false);
+        let function = Function {
+            id: String::default(),
+            start_line: 0,
+            name: "".to_string(),
+            system_name: "_ZN11collections5slice29_$LT$impl$u20$$u5b$T$u5d$$GT$10as_mut_ptr17hf12a6d0409938c96E".to_string(),
+            filename: "".to_string(),
+            name_string_index: 0,
+            system_name_string_index: 0,
+            filename_string_index: 0,
+        };
+        let demangled = demangler.demangle(&function);
+        assert_eq!("collections::slice::<impl [T]>::as_mut_ptr", demangled.name);
     }
 }
