@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
-    time::{self, Duration},
 };
 
 use chrono::TimeDelta;
@@ -11,7 +10,7 @@ use profilestorepb::{
     agents_service_server::AgentsServiceServer,
     profile_store_service_server::ProfileStoreServiceServer,
 };
-use tonic::transport::Server;
+use tonic::{codec::CompressionEncoding, transport::Server};
 
 mod agent_store;
 mod debuginfo_store;
@@ -70,9 +69,19 @@ async fn main() -> anyhow::Result<()> {
 
     log::info!("Starting server at {}", addr);
     Server::builder()
-        .add_service(ProfileStoreServiceServer::new(profile_store_impl))
+        .add_service(
+            ProfileStoreServiceServer::new(profile_store_impl)
+                .accept_compressed(CompressionEncoding::Gzip)
+                .max_decoding_message_size(1000000000)
+                .max_encoding_message_size(1000000000),
+        )
         .add_service(AgentsServiceServer::new(agent_store_impl))
-        .add_service(DebuginfoServiceServer::new(debug_store_impl))
+        .add_service(
+            DebuginfoServiceServer::new(debug_store_impl)
+                .accept_compressed(CompressionEncoding::Gzip)
+                .max_decoding_message_size(1000000000)
+                .max_encoding_message_size(1000000000),
+        )
         .serve(addr)
         .await?;
 
