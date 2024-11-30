@@ -11,6 +11,7 @@ use crate::debuginfopb::{
     InitiateUploadRequest, InitiateUploadResponse, MarkUploadFinishedRequest,
     MarkUploadFinishedResponse, ShouldInitiateUploadResponse, UploadRequest, UploadResponse,
 };
+use anyhow::bail;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 pub use debuginfod::DebugInfod;
 pub use fetcher::DebuginfoFetcher;
@@ -75,7 +76,8 @@ impl DebuginfoService for DebuginfoStore {
     async fn upload(
         &self,
         request: Request<Streaming<UploadRequest>>,
-    ) -> Result<Response<UploadResponse>, Status> {
+    ) -> anyhow::Result<Response<UploadResponse>, Status> {
+        log::info!("Upload request received");
         let mut stream = request.into_inner();
 
         let request = match stream.message().await {
@@ -160,7 +162,8 @@ impl DebuginfoService for DebuginfoStore {
     async fn should_initiate_upload(
         &self,
         request: Request<ShouldInitiateUploadRequest>,
-    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+    ) -> anyhow::Result<Response<ShouldInitiateUploadResponse>, Status> {
+        log::info!("ShouldInitiateUpload request received");
         let request = request.into_inner();
         let _ = self.validate_buildid(&request.build_id)?;
 
@@ -184,7 +187,9 @@ impl DebuginfoService for DebuginfoStore {
     async fn initiate_upload(
         &self,
         request: Request<InitiateUploadRequest>,
-    ) -> Result<Response<InitiateUploadResponse>, Status> {
+    ) -> anyhow::Result<Response<InitiateUploadResponse>, Status> {
+        log::info!("InitiateUpload request received");
+
         let request = request.into_inner();
 
         if request.hash.is_empty() {
@@ -207,7 +212,13 @@ impl DebuginfoService for DebuginfoStore {
         let should_initiate = should_initiate.into_inner();
 
         if !should_initiate.should_initiate_upload {
-            unimplemented!()
+            if should_initiate
+                .reason
+                .eq_ignore_ascii_case(REASON_DEBUGINFO_EQUAL)
+            {
+                return Err(Status::already_exists("Debuginfo already exists"));
+            }
+            return Err(Status::failed_precondition(format!( "upload should not have been attempted to be initiated, a previous check should have failed with {}", should_initiate.reason )));
         }
 
         if request.size > self.max_upload_size {
@@ -226,13 +237,19 @@ impl DebuginfoService for DebuginfoStore {
                 .metadata
                 .lock()
                 .map_err(|_| Status::internal("Failed to lock metadata"))?;
-            let _ = metadata.mark_as_uploading(
-                &request.build_id,
-                &upload_id,
-                &request.hash,
-                &request.r#type(),
-                upload_started,
-            )?;
+            let _ = metadata
+                .mark_as_uploading(
+                    &request.build_id,
+                    &upload_id,
+                    &request.hash,
+                    &request.r#type(),
+                    upload_started,
+                )
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "Failed to mark metadata as uploading. details: {e}"
+                    ))
+                })?;
         }
 
         Ok(Response::new(InitiateUploadResponse {
@@ -250,6 +267,8 @@ impl DebuginfoService for DebuginfoStore {
         &self,
         request: Request<MarkUploadFinishedRequest>,
     ) -> Result<Response<MarkUploadFinishedResponse>, Status> {
+        log::info!("MarkUploadFinished request received");
+
         let request = request.into_inner();
         let _ = self.validate_buildid(&request.build_id)?;
         {
@@ -257,28 +276,22 @@ impl DebuginfoService for DebuginfoStore {
                 .metadata
                 .lock()
                 .map_err(|_| Status::internal("Failed to lock metadata"))?;
-            let _ = metadata.mark_as_uploaded(
-                &request.build_id,
-                &request.upload_id,
-                &request.r#type(),
-                self.time_now(),
-            )?;
+            let _ = metadata
+                .mark_as_uploaded(
+                    &request.build_id,
+                    &request.upload_id,
+                    &request.r#type(),
+                    self.time_now(),
+                )
+                .map_err(|e| {
+                    Status::internal(format!("Failed to mark metadata as uploaded. details: {e}"))
+                })?;
         }
         Ok(Response::new(MarkUploadFinishedResponse::default()))
     }
 }
 
 impl DebuginfoStore {
-    pub fn default() -> Self {
-        Self {
-            metadata: Arc::new(Mutex::new(MetadataStore::default())),
-            debuginfod: Arc::new(Mutex::new(DebugInfod::default())),
-            max_upload_duration: Duration::minutes(15),
-            bucket: Arc::new(Mutex::new(HashMap::new())),
-            max_upload_size: 1000000000,
-        }
-    }
-
     fn validate_buildid(&self, id: &str) -> Result<(), Status> {
         if id.len() <= 2 {
             return Err(Status::invalid_argument("unexpectedly short input"));

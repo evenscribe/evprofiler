@@ -1,5 +1,6 @@
 use self::debuginfopb::{debuginfo::Source, debuginfo_upload, DebuginfoUpload};
 use crate::debuginfopb::{self, Debuginfo, DebuginfoType};
+use anyhow::bail;
 use chrono::{DateTime, Utc};
 use prost_types::Timestamp;
 use std::collections::HashMap;
@@ -36,6 +37,12 @@ impl MetadataStore {
         quality: &debuginfopb::DebuginfoQuality,
         req_type: &DebuginfoType,
     ) -> Result<(), Status> {
+        let path = Self::get_object_path(build_id, req_type);
+        let _ = self
+            .store
+            .entry(path)
+            .and_modify(|mdata| mdata.quality = Some(quality.clone()))
+            .or_default();
         Ok(())
     }
 
@@ -44,7 +51,7 @@ impl MetadataStore {
         servers: Vec<String>,
         build_id: &str,
         req_type: &DebuginfoType,
-    ) -> Result<(), Status> {
+    ) -> anyhow::Result<()> {
         self.write(Debuginfo {
             build_id: build_id.to_string(),
             r#type: (*req_type).into(),
@@ -62,7 +69,7 @@ impl MetadataStore {
         hash: &str,
         req_type: &DebuginfoType,
         started_at: DateTime<Utc>,
-    ) -> Result<(), Status> {
+    ) -> anyhow::Result<()> {
         self.write(Debuginfo {
             build_id: build_id.to_string(),
             r#type: (*req_type).into(),
@@ -88,23 +95,21 @@ impl MetadataStore {
         upload_id: &str,
         req_type: &DebuginfoType,
         finished_at: DateTime<Utc>,
-    ) -> Result<(), Status> {
+    ) -> anyhow::Result<()> {
         let debug_info = match self.fetch(build_id, req_type) {
             Some(d) => d,
-            None => return Err(Status::not_found("Debuginfo not found")),
+            None => bail!("Debuginfo not found"),
         };
 
         let debug_info_upload = match &debug_info.upload {
             Some(diu) => diu,
             None => {
-                return Err(Status::invalid_argument(
-                    "Debuginfo is not in uploading state",
-                ));
+                bail!("Debuginfo is not in uploading state");
             }
         };
 
         if debug_info_upload.id != upload_id {
-            return Err(Status::invalid_argument("Debuginfo mismatched upload id"));
+            bail!("Debuginfo mismatched upload id");
         }
 
         let mut debug_info = debug_info.clone();
@@ -119,16 +124,14 @@ impl MetadataStore {
         self.write(debug_info)
     }
 
-    pub fn write(&mut self, debuginfo: Debuginfo) -> Result<(), Status> {
+    pub fn write(&mut self, debuginfo: Debuginfo) -> anyhow::Result<()> {
         if debuginfo.build_id.is_empty() {
-            return Err(Status::invalid_argument(
-                "build_id is empty. REQUIRED to write debuginfo metadata",
-            ));
+            bail!("build_id is empty. REQUIRED to write debuginfo metadata");
         }
 
         let debuginfo_type = match DebuginfoType::try_from(debuginfo.r#type) {
             Ok(t) => t,
-            Err(_) => return Err(Status::invalid_argument("Invalid debuginfo type")),
+            Err(_) => bail!("Invalid debuginfo type"),
         };
 
         let path = Self::get_object_path(&debuginfo.build_id, &debuginfo_type);

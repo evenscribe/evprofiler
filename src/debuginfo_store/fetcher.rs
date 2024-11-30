@@ -1,3 +1,5 @@
+use anyhow::bail;
+
 use super::DebugInfod;
 use crate::debuginfopb::{debuginfo::Source, Debuginfo};
 use std::{
@@ -19,19 +21,21 @@ impl DebuginfoFetcher {
         Self { bucket, debuginfod }
     }
 
-    pub fn fetch_raw_elf(&self, dbginfo: &Debuginfo) -> Result<Vec<u8>, tonic::Status> {
+    pub fn fetch_raw_elf(&self, dbginfo: &Debuginfo) -> anyhow::Result<Vec<u8>> {
         let source = dbginfo.source();
         match source {
             Source::Debuginfod => self.fetch_debuginfod(dbginfo),
             Source::Upload => self.fetch_bucket(dbginfo),
-            _ => Err(tonic::Status::internal("Unknown source in Debuginfo")),
+            _ => {
+                bail!("Unknown source in Debuginfo");
+            }
         }
     }
 
-    fn fetch_debuginfod(&self, dbginfo: &Debuginfo) -> Result<Vec<u8>, tonic::Status> {
+    fn fetch_debuginfod(&self, dbginfo: &Debuginfo) -> anyhow::Result<Vec<u8>> {
         let mut debuginfod = match self.debuginfod.lock() {
             Ok(debuginfod) => debuginfod,
-            Err(_) => return Err(tonic::Status::internal("Failed to lock DebugInfod")),
+            Err(_) => bail!("DebugInfoD_Error:Failed to lock DebugInfod"),
         };
 
         let servers = debuginfod.upstream_servers.clone();
@@ -39,15 +43,16 @@ impl DebuginfoFetcher {
         Ok(rc.to_vec())
     }
 
-    fn fetch_bucket(&self, dbginfo: &Debuginfo) -> Result<Vec<u8>, tonic::Status> {
+    fn fetch_bucket(&self, dbginfo: &Debuginfo) -> anyhow::Result<Vec<u8>> {
         let bucket = match self.bucket.lock() {
             Ok(bucket) => bucket,
-            Err(_) => return Err(tonic::Status::internal("Failed to lock bucket")),
+            Err(_) => bail!("DebugInfoD_Error:Failed to lock DebugInfo storage bucket"),
         };
         let path = &dbginfo.upload.as_ref().unwrap().id;
+
         if let Some(rc) = bucket.get(path) {
             return Ok(rc.clone());
         }
-        Err(tonic::Status::internal("No data found in bucket"))
+        bail!("No data found in bucket");
     }
 }

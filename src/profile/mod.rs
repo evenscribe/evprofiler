@@ -1,11 +1,13 @@
 mod encode;
 pub mod executableinfo;
 pub mod schema;
+mod utils;
 
 use crate::metapb::{Function, Mapping};
 use arrow::record_batch::RecordBatch;
-pub use encode::encode_pprof_location;
+pub use encode::PprofLocations;
 use std::collections::HashMap;
+pub use utils::symbolize_locations;
 
 #[derive(Debug, Clone)]
 pub struct LocationLine {
@@ -13,7 +15,7 @@ pub struct LocationLine {
     pub function: Option<Function>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Location {
     pub id: String,
     pub address: u64,

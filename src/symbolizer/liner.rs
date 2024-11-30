@@ -1,6 +1,7 @@
 use super::{normalize::NormalizedAddress, ElfDebugInfo, SymbolizerCache};
 use crate::symbols::addr_to_line::{self, DwarfLiner};
 use crate::{profile::LocationLine, symbols::Demangler};
+use anyhow::bail;
 use tonic::Status;
 
 pub enum LinerKind<'data> {
@@ -43,7 +44,7 @@ impl<'data> Liner<'data> {
         }
     }
 
-    pub fn pc_to_lines(&mut self, pc: NormalizedAddress) -> Result<Vec<LocationLine>, Status> {
+    pub fn pc_to_lines(&mut self, pc: NormalizedAddress) -> anyhow::Result<Vec<LocationLine>> {
         // Cache lookup
         match self.cache.get(self.build_id, &pc) {
             Ok(ll) => {
@@ -51,7 +52,7 @@ impl<'data> Liner<'data> {
                     return Ok(ll);
                 }
             }
-            Err(e) => return Err(e),
+            Err(e) => bail!("SymbolizerError: {}", e),
         };
 
         // Lazy initialization of `l`
@@ -68,10 +69,10 @@ impl<'data> Liner<'data> {
         Ok(ll)
     }
 
-    fn construct_liner(&self) -> Result<LinerKind<'data>, Status> {
+    fn construct_liner(&self) -> anyhow::Result<LinerKind<'data>> {
         let quality = match self.elfdbginfo.quality {
             Some(q) => q,
-            None => return Err(Status::internal("No debuginfo quality found")),
+            None => bail!("No debuginfo quality found"),
         };
 
         if quality.has_dwarf {
@@ -88,7 +89,7 @@ impl<'data> Liner<'data> {
             // Ok(addr_to_line::symbols(self.elfdbginfo, self.demangler)?)
             Ok(LinerKind::Symbol)
         } else {
-            Err(Status::not_found("Check debuginfo quality."))
+            bail!("LinerError: Check debuginfo quality.");
         }
     }
 }

@@ -1,12 +1,11 @@
 use super::{NormalizedProfile, Series};
 use crate::pprofpb::Profile;
 use crate::profilestorepb::WriteRawRequest;
+use anyhow::bail;
 use flate2::read::GzDecoder;
 use prost::Message;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
-use std::result::Result;
-use tonic::Status;
 
 #[derive(Debug)]
 pub struct NormalizedWriteRawRequest {
@@ -15,13 +14,13 @@ pub struct NormalizedWriteRawRequest {
 }
 
 impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
-    type Error = Status;
+    type Error = anyhow::Error;
 
-    fn try_from(request: &WriteRawRequest) -> Result<Self, Self::Error> {
+    fn try_from(request: &WriteRawRequest) -> anyhow::Result<Self> {
         let mut all_label_names: HashSet<String> = HashSet::new();
         let mut series: Vec<Series> = Vec::with_capacity(request.series.len());
 
-        log::info!("raw_series: {:?}", request.series.len());
+        log::warn!("raw_series: {:?}", request.series.len());
         for raw_series in request.series.iter() {
             let mut ls: HashMap<String, String> = HashMap::new();
             let mut name: String = "".into();
@@ -34,10 +33,7 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
                     }
 
                     if ls.contains_key(&label.name) {
-                        return Err(Status::invalid_argument(format!(
-                            "Duplicate label {} in series",
-                            label.name
-                        )));
+                        bail!("Duplicate label {} in series", label.name);
                     }
 
                     ls.insert(label.name.clone(), label.value.clone());
@@ -46,9 +42,7 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
             }
 
             if name.is_empty() {
-                return Err(Status::invalid_argument(
-                    "Series must have a __name__ label",
-                ));
+                bail!("Series must have a __name__ label");
             }
 
             let mut samples: Vec<Vec<NormalizedProfile>> =
@@ -57,25 +51,14 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
             for sample in raw_series.samples.iter() {
                 let mut decompressed = Vec::new();
 
-                if sample.raw_profile.len() >= 2
-                    && sample.raw_profile[0] == 0x1f
-                    && sample.raw_profile[1] == 0x8b
-                {
-                    let mut decoder = GzDecoder::new(sample.raw_profile.as_slice());
+                let mut decoder = GzDecoder::new(sample.raw_profile.as_slice());
+                if let Some(_) = decoder.header() {
                     if let Err(e) = decoder.read_to_end(&mut decompressed) {
-                        return Err(Status::internal(format!(
-                            "Failed to decompress gzip: {}",
-                            e
-                        )));
+                        bail!("Failed to decompress gzip: {}", e);
                     }
                 }
 
-                let p = match Profile::decode(decompressed.as_slice()) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return Err(Status::internal(format!("Failed to decode profile: {}", e)))
-                    }
-                };
+                let p = Profile::decode(decompressed.as_slice())?;
 
                 // let _ =
                 super::utils::validate_pprof_profile(&p, sample.executable_info.as_slice())?;
@@ -88,7 +71,7 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
                 );
 
                 let np: Vec<NormalizedProfile> =
-                    super::utils::normalize_pprof(name.as_str(), &ls, &p);
+                    super::utils::normalize_pprof(name.as_str(), &ls, &p)?;
 
                 samples.push(np);
             }

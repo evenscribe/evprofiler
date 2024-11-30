@@ -10,6 +10,7 @@ use crate::{
     debuginfopb::{self, DebuginfoQuality, DebuginfoType},
     profile::executableinfo::{ExecutableInfo, Mapping},
 };
+use anyhow::{bail, Context};
 use liner::Liner;
 use normalize::NormalizedAddress;
 use std::io::Write;
@@ -45,6 +46,7 @@ impl SymbolizerCache {
     }
 }
 
+#[derive(Debug)]
 pub struct Symbolizer {
     pub(crate) demangler: Demangler,
     cache: SymbolizerCache,
@@ -53,16 +55,19 @@ pub struct Symbolizer {
     temp_dir: PathBuf,
 }
 
-pub struct SymbolizationRequestMappingAddrs<'a> {
+#[derive(Debug)]
+pub struct SymbolizationRequestMappingAddrs {
     /// This slice is used to store the symbolization result directly.
-    locations: &'a mut [Location],
+    pub locations: Vec<Location>,
 }
 
+#[derive(Debug)]
 pub struct SymbolizationRequest {
-    build_id: String,
-    mappings: Vec<SymbolizationRequestMappingAddrs<'static>>,
+    pub build_id: String,
+    pub mappings: Vec<SymbolizationRequestMappingAddrs>,
 }
 
+#[derive(Debug)]
 pub struct ElfDebugInfo<'data> {
     pub(crate) target_path: PathBuf,
     pub(crate) e: object::File<'data>,
@@ -80,12 +85,8 @@ impl Symbolizer {
         }
     }
 
-    pub fn symbolize(&self, request: SymbolizationRequest) -> Result<(), Status> {
-        log::log!(
-            log::Level::Debug,
-            "Symbolizing request for build_id: {}",
-            request.build_id
-        );
+    pub fn symbolize(&self, request: &mut SymbolizationRequest) -> anyhow::Result<()> {
+        log::debug!("Symbolizing request for build_id: {}", request.build_id);
 
         let build_id = &request.build_id;
 
@@ -107,6 +108,7 @@ impl Symbolizer {
 
         let raw_data = self.fetcher.fetch_raw_elf(&dbginfo)?;
         let elf_debug_info = self.get_debug_info(&request.build_id, &mut dbginfo, &raw_data)?;
+        log::warn!("elf_debug_info: {:#?}", elf_debug_info);
 
         let mut l = Liner::new(
             &request.build_id,
@@ -115,21 +117,13 @@ impl Symbolizer {
             &self.demangler,
         );
 
-        let ei = match ExecutableInfo::try_from(&elf_debug_info.e) {
-            Ok(ei) => ei,
-            Err(e) => {
-                return Err(Status::internal(format!(
-                    "Failed to get ExecutableInfo: {}",
-                    e
-                )))
-            }
-        };
+        let ei = ExecutableInfo::try_from(&elf_debug_info.e)?;
 
-        for mapping in request.mappings {
-            for location in mapping.locations {
+        for mapping in request.mappings.iter_mut() {
+            for location in mapping.locations.iter_mut() {
                 let mapping = match &location.mapping {
                     Some(mapping) => mapping,
-                    None => return Err(Status::internal("Provided Empty Mappings.")),
+                    None => bail!("Mapping not found"),
                 };
                 let addr = NormalizedAddress::try_new(
                     location.address,
@@ -148,44 +142,46 @@ impl Symbolizer {
         Ok(())
     }
 
-    fn check_quality(quality: &Option<DebuginfoQuality>) -> Result<(), Status> {
+    fn check_quality(quality: &Option<DebuginfoQuality>) -> anyhow::Result<()> {
         if let Some(q) = quality {
             if q.not_valid_elf {
-                return Err(Status::not_found("Not a valid ELF file"));
+                bail!("Not a valid ELF file");
             }
 
             if !(q.has_dwarf || q.has_go_pclntab || q.has_symtab || q.has_dynsym) {
-                return Err(Status::not_found("Check debuginfo quality."));
+                bail!("Trying to Symbolize but it has none of the quality evprofiler needs. Check debuginfo quality: {:?}", q);
             }
         }
         Ok(())
     }
 
-    fn validate_source(dbginfo: &debuginfopb::Debuginfo) -> Result<(), Status> {
+    fn validate_source(dbginfo: &debuginfopb::Debuginfo) -> anyhow::Result<()> {
         match dbginfo.source() {
             debuginfopb::debuginfo::Source::Upload => {
                 let upload = dbginfo
                     .upload
                     .as_ref()
-                    .ok_or_else(|| Status::not_found("Debuginfo not uploaded yet"))?;
+                    .with_context(|| "debug info not uploaded yet")?;
 
                 if upload.state() != debuginfopb::debuginfo_upload::State::Uploaded {
-                    return Err(Status::not_found("Debuginfo not uploaded yet"));
+                    bail!("Debuginfo not uploaded yet");
                 }
             }
             debuginfopb::debuginfo::Source::Debuginfod => (),
-            _ => return Err(Status::not_found("Debuginfo not found")),
+            _ => bail!("Invalid or unsupported source"),
         }
         Ok(())
     }
 
-    fn lock_metadata(&self) -> Result<MutexGuard<MetadataStore>, Status> {
-        self.metadata
+    fn lock_metadata(&self) -> anyhow::Result<MutexGuard<MetadataStore>> {
+        let m = self
+            .metadata
             .lock()
-            .map_err(|_| Status::internal("Failed to lock metadata store"))
+            .map_err(|_| Status::internal("Failed to lock metadata store"))?;
+        Ok(m)
     }
 
-    fn create_and_write_temp_file(&self, data: &[u8], build_id: &str) -> Result<PathBuf, Status> {
+    fn create_and_write_temp_file(&self, data: &[u8], build_id: &str) -> anyhow::Result<PathBuf> {
         let mut tmp_file = tempfile::NamedTempFile::new_in(&self.temp_dir)
             .map_err(|e| Status::internal(format!("Failed to create temporary file: {}", e)))?;
 
@@ -205,9 +201,10 @@ impl Symbolizer {
         Ok(target_path)
     }
 
-    fn update_quality(&self, build_id: &str, quality: DebuginfoQuality) -> Result<(), Status> {
+    fn update_quality(&self, build_id: &str, quality: DebuginfoQuality) -> anyhow::Result<()> {
         let mut metadata = self.lock_metadata()?;
-        metadata.set_quality(build_id, &quality, &DebuginfoType::DebuginfoUnspecified)
+        let _ = metadata.set_quality(build_id, &quality, &DebuginfoType::DebuginfoUnspecified)?;
+        Ok(())
     }
 
     fn get_debug_info<'a>(
@@ -215,7 +212,7 @@ impl Symbolizer {
         build_id: &str,
         dbginfo: &mut Debuginfo,
         in_data: &'a [u8],
-    ) -> Result<ElfDebugInfo<'a>, Status> {
+    ) -> anyhow::Result<ElfDebugInfo<'a>> {
         let target_path = self.create_and_write_temp_file(in_data, build_id)?;
 
         // Parse ELF file
@@ -254,5 +251,36 @@ impl Symbolizer {
             e: file,
             quality: dbginfo.quality,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{debuginfo_store, metapb, profile};
+
+    use super::*;
+
+    #[test]
+    fn symbolization_test() {
+        let metadata_store = Arc::new(Mutex::new(debuginfo_store::MetadataStore::new()));
+        let debuginfod = Arc::new(Mutex::new(debuginfo_store::DebugInfod::default()));
+        let bucket: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::from(HashMap::new()));
+        let symbolizer = Arc::new(Symbolizer::new(
+            Arc::clone(&metadata_store),
+            DebuginfoFetcher::new(Arc::clone(&bucket), Arc::clone(&debuginfod)),
+        ));
+
+        let mapping = metapb::Mapping {
+            start: 4194304,
+            limit: 4603904,
+            build_id: "2d6912fd3dd64542f6f6294f4bf9cb6c265b3085".into(),
+            ..Default::default()
+        };
+
+        let location = profile::Location {
+            mapping: Some(mapping.clone()),
+            address: 0x463781,
+            ..Default::default()
+        };
     }
 }

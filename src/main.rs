@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::{self, Duration},
 };
 
 use chrono::TimeDelta;
@@ -37,13 +38,12 @@ pub(crate) mod debuginfopb {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     colog::init();
 
     let metadata_store = Arc::new(Mutex::new(debuginfo_store::MetadataStore::new()));
     let debuginfod = Arc::new(Mutex::new(debuginfo_store::DebugInfod::default()));
     let bucket: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::from(HashMap::new()));
-
     let symbolizer = Arc::new(symbolizer::Symbolizer::new(
         Arc::clone(&metadata_store),
         DebuginfoFetcher::new(Arc::clone(&bucket), Arc::clone(&debuginfod)),
@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:3333".parse().unwrap();
 
     log::info!("Attaching ProfileStoreService to the server");
-    let profile_store_impl = profile_store::ProfileStore::default();
+    let profile_store_impl = profile_store::ProfileStore::new(Arc::clone(&symbolizer));
 
     log::info!("Attaching AgentsService to the server");
     let agent_store_impl = agent_store::AgentStore::default();
@@ -63,8 +63,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let debug_store_impl = debuginfo_store::DebuginfoStore {
         metadata: Arc::clone(&metadata_store),
         debuginfod: Arc::clone(&debuginfod),
-        max_upload_duration: TimeDelta::new(60 * 5, 0).unwrap(),
-        max_upload_size: 200,
+        max_upload_duration: TimeDelta::new(60 * 15, 0).unwrap(),
+        max_upload_size: 1000000000,
         bucket: Arc::clone(&bucket),
     };
 

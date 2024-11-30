@@ -1,12 +1,16 @@
-use crate::normalizer;
 use crate::profilestorepb::profile_store_service_server::ProfileStoreService;
 use crate::profilestorepb::{WriteRawRequest, WriteRawResponse, WriteRequest, WriteResponse};
+use crate::{normalizer, symbolizer};
+use anyhow::bail;
+use std::sync::Arc;
 use std::{pin::Pin, result::Result};
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status, Streaming};
 
-#[derive(Debug, Default)]
-pub struct ProfileStore {}
+#[derive(Debug)]
+pub struct ProfileStore {
+    symbolizer: Arc<symbolizer::Symbolizer>,
+}
 
 #[tonic::async_trait]
 impl ProfileStoreService for ProfileStore {
@@ -14,8 +18,11 @@ impl ProfileStoreService for ProfileStore {
     async fn write_raw(
         &self,
         request: Request<WriteRawRequest>,
-    ) -> Result<Response<WriteRawResponse>, Status> {
-        let _ = self.write_series(&request.into_inner())?;
+    ) -> anyhow::Result<Response<WriteRawResponse>, Status> {
+        let _ = match self.write_series(&request.into_inner()) {
+            Ok(_) => (),
+            Err(e) => return Err(Status::internal(e.to_string())),
+        };
         return Ok(Response::new(WriteRawResponse {}));
     }
     /// Server streaming response type for the Write method.
@@ -30,7 +37,7 @@ impl ProfileStoreService for ProfileStore {
     async fn write(
         &self,
         request: Request<Streaming<WriteRequest>>,
-    ) -> Result<Response<Self::WriteStream>, Status> {
+    ) -> anyhow::Result<Response<Self::WriteStream>, Status> {
         let mut stream = request.into_inner();
 
         log::info!("Received ProfileStoreService::write request",);
@@ -50,12 +57,23 @@ impl ProfileStoreService for ProfileStore {
 }
 
 impl ProfileStore {
-    pub fn write_series(&self, request: &WriteRawRequest) -> Result<(), Status> {
-        let record = match normalizer::write_raw_request_to_arrow_record(request) {
+    pub fn new(symbolizer: Arc<symbolizer::Symbolizer>) -> Self {
+        Self {
+            symbolizer: Arc::clone(&symbolizer),
+        }
+    }
+
+    pub fn write_series(&self, request: &WriteRawRequest) -> anyhow::Result<()> {
+        let record = match normalizer::write_raw_request_to_arrow_record(
+            request,
+            Arc::clone(&self.symbolizer),
+        ) {
             Ok(record) => record,
             Err(e) => {
-                log::error!("{}", e);
-                return Err(Status::internal(e.to_string()));
+                bail!(
+                    "Failed to normalize WriteRawRequest to Arrow Record, details: {}",
+                    e
+                );
             }
         };
 

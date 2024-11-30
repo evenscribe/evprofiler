@@ -4,4 +4,8 @@ aarch64_linux:
 native:
 	cargo build --release
 
+transfer:
+	multipass transfer -r ../evprofiler focal:apps/evprofiler  
 
+clean: 
+	rm -rf target .cargo

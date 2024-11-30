@@ -1,7 +1,4 @@
-use object::{
-    elf::PF_X, File, Object, ObjectKind, ObjectSection, ObjectSegment, SegmentFlags,
-    SegmentIterator,
-};
+use object::{elf::PF_X, File, Object, ObjectKind, ObjectSection, ObjectSegment, SegmentFlags};
 use tonic::Status;
 
 #[derive(Debug, Clone)]
@@ -11,6 +8,7 @@ pub struct ProgHeader {
     pub(crate) memsz: u64,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Mapping {
     pub start: u64,
     pub end: u64,

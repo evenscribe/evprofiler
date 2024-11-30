@@ -7,6 +7,8 @@ use self::metapb::Function;
 /// function and parameter list combination into a unique name for the linker).
 /// With mangling the linker can tell the difference between overloaded functions
 /// (they have the same name in the source code but different parameter lists).
+///
+#[derive(Debug)]
 pub struct Demangler {
     force: bool,
 }

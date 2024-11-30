@@ -1,3 +1,4 @@
+use anyhow::{bail, Context};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tonic::Status;
 use url::Url;
@@ -38,7 +39,7 @@ impl DebugInfod {
         available_servers
     }
 
-    pub fn get(&mut self, upstream_server: &Url, build_id: &str) -> Result<&[u8], Status> {
+    pub fn get(&mut self, upstream_server: &Url, build_id: &str) -> anyhow::Result<&[u8]> {
         self.debuginfo_request(upstream_server, build_id)
     }
 
@@ -46,15 +47,13 @@ impl DebugInfod {
         &mut self,
         upstream_server: &Url,
         build_id: &str,
-    ) -> Result<&[u8], Status> {
-        let url = upstream_server
-            .join(format!("buildid/{}/debuginfo", build_id).as_str())
-            .unwrap();
+    ) -> anyhow::Result<&[u8]> {
+        let url = upstream_server.join(format!("buildid/{}/debuginfo", build_id).as_str())?;
 
         self.request(url)
     }
 
-    fn request(&mut self, url: Url) -> Result<&[u8], Status> {
+    fn request(&mut self, url: Url) -> anyhow::Result<&[u8]> {
         if !self.bucket.contains_key(url.as_str()) {
             let response =
                 self.client.get(url.as_str()).call().map_err(|err| {
@@ -66,14 +65,13 @@ impl DebugInfod {
                 response
                     .into_reader()
                     .read_to_end(&mut content)
-                    .map_err(|e| Status::internal(format!("Failed to read response: {}", e)))?;
+                    .with_context(|| {
+                        format!("Failed to read response from the debuginfod server")
+                    })?;
 
                 self.bucket.insert(url.to_string(), content);
             } else {
-                return Err(Status::internal(format!(
-                    "Failed to fetch debuginfo: {}",
-                    response.status()
-                )));
+                bail!("Failed to fetch debuginfo: {}", response.status());
             }
         }
 
