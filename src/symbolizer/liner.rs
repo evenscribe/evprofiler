@@ -1,13 +1,17 @@
 use super::{normalize::NormalizedAddress, ElfDebugInfo, SymbolizerCache};
-use crate::symbols::addr_to_line::{self, DwarfLiner};
-use crate::{profile::LocationLine, symbols::Demangler};
+use crate::{
+    profile::LocationLine,
+    symbols::{
+        addr_to_line::{self, DwarfLiner, SymbolLiner},
+        Demangler,
+    },
+};
 use anyhow::bail;
-use tonic::Status;
 
 pub enum LinerKind<'data> {
     Dwarf(DwarfLiner<'data>),
     // Go,
-    Symbol,
+    Symbol(SymbolLiner<'data>),
 }
 
 pub struct Liner<'data> {
@@ -19,11 +23,11 @@ pub struct Liner<'data> {
 }
 
 impl LinerKind<'_> {
-    pub fn pc_to_lines(&self, pc: NormalizedAddress) -> Result<Vec<LocationLine>, Status> {
+    pub fn pc_to_lines(&self, pc: NormalizedAddress) -> anyhow::Result<Vec<LocationLine>> {
         match self {
             LinerKind::Dwarf(l) => l.pc_to_lines(pc),
             // LinerKind::Go => todo!(),
-            LinerKind::Symbol => todo!(),
+            LinerKind::Symbol(l) => l.pc_to_lines(pc),
         }
     }
 }
@@ -87,7 +91,11 @@ impl<'data> Liner<'data> {
         // }
         else if quality.has_symtab || quality.has_dynsym {
             // Ok(addr_to_line::symbols(self.elfdbginfo, self.demangler)?)
-            Ok(LinerKind::Symbol)
+            Ok(LinerKind::Symbol(addr_to_line::symbol(
+                self.elfdbginfo,
+                self.elfdbginfo.target_path.to_str().unwrap(),
+                self.demangler,
+            )?))
         } else {
             bail!("LinerError: Check debuginfo quality.");
         }

@@ -4,6 +4,7 @@ use crate::{
     symbolizer::{normalize::NormalizedAddress, ElfDebugInfo},
     symbols::Demangler,
 };
+use anyhow::bail;
 use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget};
 use tonic::Status;
 
@@ -24,7 +25,7 @@ impl<'data> SymbolLiner<'data> {
         elfdbginfo: &'data ElfDebugInfo,
         filename: &str,
         demangler: &'data Demangler,
-    ) -> Result<Self, Status> {
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             file_name: filename.to_string(),
             symbols: Self::symtab(elfdbginfo),
@@ -32,7 +33,7 @@ impl<'data> SymbolLiner<'data> {
         })
     }
 
-    pub fn pc_to_lines(&self, pc: NormalizedAddress) -> Result<Vec<profile::LocationLine>, Status> {
+    pub fn pc_to_lines(&self, pc: NormalizedAddress) -> anyhow::Result<Vec<profile::LocationLine>> {
         self.source_lines(pc.0)
     }
 
@@ -85,13 +86,11 @@ impl<'data> SymbolLiner<'data> {
         symbols
     }
 
-    fn source_lines(&self, pc: u64) -> Result<Vec<profile::LocationLine>, Status> {
+    fn source_lines(&self, pc: u64) -> anyhow::Result<Vec<profile::LocationLine>> {
         let closest_symbol = match self.find_closest_symbol(pc) {
             Some(s) => s,
             None => {
-                return Err(Status::invalid_argument(
-                    "No symbol found for the given address",
-                ))
+                bail!("No symbol found for the given address");
             }
         };
 

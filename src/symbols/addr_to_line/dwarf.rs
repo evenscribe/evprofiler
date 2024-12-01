@@ -1,7 +1,6 @@
 use crate::symbolizer::normalize::NormalizedAddress;
 use crate::{metapb, profile, symbolizer::ElfDebugInfo, symbols::Demangler};
 use addr2line::LookupResult;
-use core::error;
 use object::{Object, ObjectSection};
 use std::borrow;
 use tonic::Status;
@@ -16,7 +15,7 @@ impl<'data> DwarfLiner<'data> {
     pub fn try_new(
         elfdbginfo: &'data ElfDebugInfo,
         demangler: &'data Demangler,
-    ) -> Result<Self, Status> {
+    ) -> anyhow::Result<Self> {
         let endian = if elfdbginfo.e.is_little_endian() {
             gimli::RunTimeEndian::Little
         } else {
@@ -33,48 +32,36 @@ impl<'data> DwarfLiner<'data> {
     pub fn pc_to_lines(
         &self,
         addr: NormalizedAddress,
-    ) -> Result<Vec<profile::LocationLine>, Status> {
+    ) -> anyhow::Result<Vec<profile::LocationLine>> {
         self.source_lines(addr.0)
     }
 
-    fn source_lines(&self, addr: u64) -> Result<Vec<profile::LocationLine>, Status> {
+    fn source_lines(&self, addr: u64) -> anyhow::Result<Vec<profile::LocationLine>> {
         // Load a section and return as `Cow<[u8]>`.
-        let load_section =
-            |id: gimli::SectionId| -> Result<borrow::Cow<[u8]>, Box<dyn error::Error>> {
-                Ok(match self.elfdbginfo.e.section_by_name(id.name()) {
-                    Some(section) => section.uncompressed_data()?,
-                    None => borrow::Cow::Borrowed(&[]),
-                })
-            };
+        let load_section = |id: gimli::SectionId| -> anyhow::Result<borrow::Cow<[u8]>> {
+            Ok(match self.elfdbginfo.e.section_by_name(id.name()) {
+                Some(section) => section.uncompressed_data()?,
+                None => borrow::Cow::Borrowed(&[]),
+            })
+        };
 
         // Borrow a `Cow<[u8]>` to create an `EndianSlice`.
         let borrow_section =
             |section| gimli::EndianSlice::new(borrow::Cow::as_ref(section), self.endian);
 
         // Load all of the sections.
-        let dwarf_sections = match gimli::DwarfSections::load(&load_section) {
-            Ok(sections) => sections,
-            Err(e) => {
-                return Err(Status::internal(format!(
-                    "Failed to load Dwarf sections: {}",
-                    e
-                )))
-            }
-        };
+        let dwarf_sections = gimli::DwarfSections::load(&load_section)?;
 
         // Create `EndianSlice`s for all of the sections.
         let dwarf = dwarf_sections.borrow(borrow_section);
 
         // Constructing a Context is somewhat costly, so users should aim to reuse Contexts when performing lookups for many addresses in the same executable.
-        let c = match addr2line::Context::from_dwarf(dwarf) {
-            Ok(c) => c,
-            Err(e) => return Err(Status::internal(format!("Failed to create Context: {}", e))),
-        };
+        let c = addr2line::Context::from_dwarf(dwarf)?;
 
         let mut lines = vec![];
         let frames = c.find_frames(addr);
 
-        let result = loop {
+        let mut result = loop {
             match frames {
                 LookupResult::Output(result) => break result,
                 LookupResult::Load {
@@ -82,18 +69,12 @@ impl<'data> DwarfLiner<'data> {
                     continuation: _,
                 } => {}
             }
-        };
-
-        let mut result = match result {
-            Ok(result) => result,
-            Err(e) => return Err(Status::internal(format!("Failed to lookup address: {}", e))),
-        };
+        }?;
 
         loop {
-            let frame = match result.next() {
-                Ok(Some(frame)) => frame,
-                Ok(None) => break,
-                Err(e) => return Err(Status::internal(format!("Failed to get next frame: {}", e))),
+            let frame = match result.next()? {
+                Some(frame) => frame,
+                None => break,
             };
 
             let function = match frame.function {
