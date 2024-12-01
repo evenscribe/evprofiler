@@ -334,20 +334,22 @@ pub fn write_raw_request_to_arrow_record(
 ) -> anyhow::Result<RecordBatch> {
     let normalized_request = NormalizedWriteRawRequest::try_from(request)?;
 
-    let mut sym_locations = vec![];
     for series in normalized_request.series.iter() {
         for sample in series.samples.iter() {
             for np in sample.iter() {
                 for ns in np.samples.iter() {
-                    sym_locations.push(profile::symbolize_locations(
+                    let x = profile::symbolize_locations(
                         ns.locations.as_slice(),
                         Arc::clone(&symbolizer),
-                    )?);
+                    )?;
+                    log::warn!("{:#?}", x.first().take());
+                    return Ok(RecordBatch::new_empty(Arc::new(schema::create_schema(
+                        &normalized_request.all_label_names,
+                    ))));
                 }
             }
         }
     }
-    log::info!("sym_locations: {:#?}", sym_locations);
 
     Ok(RecordBatch::new_empty(Arc::new(schema::create_schema(
         &normalized_request.all_label_names,

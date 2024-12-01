@@ -1,10 +1,8 @@
-use object::{elf::SHT_DYNSYM, File, Object, ObjectSection, SectionKind};
+use object::{File, Object};
 
 pub fn has_dynsym(e: &File<'_>) -> bool {
-    for section in e.sections() {
-        if section.kind() == SectionKind::Elf(SHT_DYNSYM) {
-            return true;
-        }
+    if let Some(_) = e.dynamic_symbol_table() {
+        return true;
     }
     false
 }

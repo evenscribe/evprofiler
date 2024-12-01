@@ -69,12 +69,7 @@ async fn main() -> anyhow::Result<()> {
 
     log::info!("Starting server at {}", addr);
     Server::builder()
-        .add_service(
-            ProfileStoreServiceServer::new(profile_store_impl)
-                .accept_compressed(CompressionEncoding::Gzip)
-                .max_decoding_message_size(1000000000)
-                .max_encoding_message_size(1000000000),
-        )
+        .add_service(ProfileStoreServiceServer::new(profile_store_impl))
         .add_service(AgentsServiceServer::new(agent_store_impl))
         .add_service(
             DebuginfoServiceServer::new(debug_store_impl)

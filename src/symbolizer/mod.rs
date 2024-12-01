@@ -86,11 +86,11 @@ impl Symbolizer {
     }
 
     pub fn symbolize(&self, request: &mut SymbolizationRequest) -> anyhow::Result<()> {
-        log::debug!("Symbolizing request for build_id: {}", request.build_id);
+        log::info!("Symbolizing request for build_id: {}", request.build_id);
 
         let build_id = &request.build_id;
 
-        let mut dbginfo = {
+        let mut dbginfo_md = {
             let metadata = self.lock_metadata()?;
             metadata
                 .fetch(build_id, &DebuginfoType::DebuginfoUnspecified)
@@ -100,15 +100,13 @@ impl Symbolizer {
                 .clone()
         };
 
-        // Validate existing quality if present
-        Self::check_quality(&dbginfo.quality)?;
+        if let Some(q) = &dbginfo_md.quality {
+            let _ = Self::check_quality(q)?;
+        }
+        let _ = Self::validate_source(&dbginfo_md);
 
-        // Validate source
-        Self::validate_source(&dbginfo)?;
-
-        let raw_data = self.fetcher.fetch_raw_elf(&dbginfo)?;
-        let elf_debug_info = self.get_debug_info(&request.build_id, &mut dbginfo, &raw_data)?;
-        log::warn!("elf_debug_info: {:#?}", elf_debug_info);
+        let raw_data = self.fetcher.fetch_raw_elf(&dbginfo_md)?;
+        let elf_debug_info = self.get_debug_info(&request.build_id, &mut dbginfo_md, &raw_data)?;
 
         let mut l = Liner::new(
             &request.build_id,
@@ -142,15 +140,13 @@ impl Symbolizer {
         Ok(())
     }
 
-    fn check_quality(quality: &Option<DebuginfoQuality>) -> anyhow::Result<()> {
-        if let Some(q) = quality {
-            if q.not_valid_elf {
-                bail!("Not a valid ELF file");
-            }
+    fn check_quality(q: &DebuginfoQuality) -> anyhow::Result<()> {
+        if q.not_valid_elf {
+            bail!("Not a valid ELF file");
+        }
 
-            if !(q.has_dwarf || q.has_go_pclntab || q.has_symtab || q.has_dynsym) {
-                bail!("Trying to Symbolize but it has none of the quality evprofiler needs. Check debuginfo quality: {:?}", q);
-            }
+        if !(q.has_dwarf || q.has_go_pclntab || q.has_symtab || q.has_dynsym) {
+            bail!("Trying to Symbolize but it has none of the quality evprofiler needs. Check debuginfo quality: {:?}", q);
         }
         Ok(())
     }
@@ -215,9 +211,8 @@ impl Symbolizer {
     ) -> anyhow::Result<ElfDebugInfo<'a>> {
         let target_path = self.create_and_write_temp_file(in_data, build_id)?;
 
-        // Parse ELF file
         let file = object::File::parse(in_data).map_err(|e| {
-            // Update quality on parse failure
+            log::warn!("Received a bad object type. Details: {:#?}", e);
             let quality = DebuginfoQuality {
                 not_valid_elf: true,
                 has_dwarf: false,
@@ -226,10 +221,26 @@ impl Symbolizer {
                 has_dynsym: false,
             };
             let _ = self.update_quality(build_id, quality);
-            Status::internal(format!("Failed to parse ELF file: {}", e))
+            Status::internal(format!("Failed to parse object file: {}", e))
         })?;
 
-        // Update quality if not present
+        // check if the file is a valid ELF file, object crate does take other types of files
+        match file {
+            object::File::Elf32(_) | object::File::Elf64(_) => (),
+            _ => {
+                log::warn!("Received a different object type.");
+                let quality = DebuginfoQuality {
+                    not_valid_elf: true,
+                    has_dwarf: false,
+                    has_go_pclntab: false,
+                    has_symtab: false,
+                    has_dynsym: false,
+                };
+                let _ = self.update_quality(build_id, quality);
+                bail!("Not a valid ELF file");
+            }
+        }
+
         if dbginfo.quality.is_none() {
             let quality = DebuginfoQuality {
                 not_valid_elf: false,
@@ -239,11 +250,15 @@ impl Symbolizer {
                 has_dynsym: elfutils::has_dynsym(&file),
             };
 
+            // log::warn!(
+            //     "I got hereee inside get_debug_info(). i got this quality:  {:#?}",
+            //     quality
+            // );
             dbginfo.quality = Some(quality);
-            self.update_quality(&dbginfo.build_id, quality)?;
+            let _ = self.update_quality(&dbginfo.build_id, quality)?;
 
             // Validate the new quality
-            Self::check_quality(&dbginfo.quality)?;
+            Self::check_quality(&quality)?;
         }
 
         Ok(ElfDebugInfo {

@@ -41,8 +41,7 @@ impl MetadataStore {
         let _ = self
             .store
             .entry(path)
-            .and_modify(|mdata| mdata.quality = Some(quality.clone()))
-            .or_default();
+            .and_modify(|mdata| mdata.quality = Some(quality.clone()));
         Ok(())
     }
 

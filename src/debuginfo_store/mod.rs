@@ -11,7 +11,6 @@ use crate::debuginfopb::{
     InitiateUploadRequest, InitiateUploadResponse, MarkUploadFinishedRequest,
     MarkUploadFinishedResponse, ShouldInitiateUploadResponse, UploadRequest, UploadResponse,
 };
-use anyhow::bail;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 pub use debuginfod::DebugInfod;
 pub use fetcher::DebuginfoFetcher;
@@ -77,7 +76,7 @@ impl DebuginfoService for DebuginfoStore {
         &self,
         request: Request<Streaming<UploadRequest>>,
     ) -> anyhow::Result<Response<UploadResponse>, Status> {
-        log::info!("Upload request received");
+        // log::info!("Upload request received");
         let mut stream = request.into_inner();
 
         let request = match stream.message().await {
@@ -163,7 +162,7 @@ impl DebuginfoService for DebuginfoStore {
         &self,
         request: Request<ShouldInitiateUploadRequest>,
     ) -> anyhow::Result<Response<ShouldInitiateUploadResponse>, Status> {
-        log::info!("ShouldInitiateUpload request received");
+        // log::info!("ShouldInitiateUpload request received");
         let request = request.into_inner();
         let _ = self.validate_buildid(&request.build_id)?;
 
@@ -188,7 +187,7 @@ impl DebuginfoService for DebuginfoStore {
         &self,
         request: Request<InitiateUploadRequest>,
     ) -> anyhow::Result<Response<InitiateUploadResponse>, Status> {
-        log::info!("InitiateUpload request received");
+        // log::info!("InitiateUpload request received");
 
         let request = request.into_inner();
 
@@ -267,7 +266,7 @@ impl DebuginfoService for DebuginfoStore {
         &self,
         request: Request<MarkUploadFinishedRequest>,
     ) -> Result<Response<MarkUploadFinishedResponse>, Status> {
-        log::info!("MarkUploadFinished request received");
+        // log::info!("MarkUploadFinished request received");
 
         let request = request.into_inner();
         let _ = self.validate_buildid(&request.build_id)?;
