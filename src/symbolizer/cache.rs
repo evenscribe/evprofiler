@@ -46,7 +46,8 @@ impl SymbolizerCache {
             encoded.push(line.encode()?);
         }
 
-        Ok(self.c.insert(key, encoded))
+        self.c.insert(key, encoded);
+        Ok(())
     }
 
     fn build_cache_key(build_id: &str, addr: &NormalizedAddress) -> Vec<u8> {

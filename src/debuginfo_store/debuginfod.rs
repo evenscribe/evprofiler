@@ -1,5 +1,5 @@
 use anyhow::{bail, Context};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, time::Duration};
 use tonic::Status;
 use url::Url;
 

@@ -75,7 +75,7 @@ impl Symbolizer {
         };
 
         if let Some(q) = &dbginfo_md.quality {
-            let _ = Self::check_quality(q)?;
+            Self::check_quality(q)?;
         }
         let _ = Self::validate_source(&dbginfo_md);
 
@@ -173,7 +173,7 @@ impl Symbolizer {
 
     fn update_quality(&self, build_id: &str, quality: DebuginfoQuality) -> anyhow::Result<()> {
         let mut metadata = self.lock_metadata()?;
-        let _ = metadata.set_quality(build_id, &quality, &DebuginfoType::DebuginfoUnspecified)?;
+        metadata.set_quality(build_id, &quality, &DebuginfoType::DebuginfoUnspecified)?;
         Ok(())
     }
 
@@ -229,7 +229,7 @@ impl Symbolizer {
             //     quality
             // );
             dbginfo.quality = Some(quality);
-            let _ = self.update_quality(&dbginfo.build_id, quality)?;
+            self.update_quality(&dbginfo.build_id, quality)?;
 
             // Validate the new quality
             Self::check_quality(&quality)?;

@@ -20,7 +20,6 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
         let mut all_label_names: HashSet<String> = HashSet::new();
         let mut series: Vec<Series> = Vec::with_capacity(request.series.len());
 
-        log::warn!("raw_series: {:?}", request.series.len());
         for raw_series in request.series.iter() {
             let mut ls: HashMap<String, String> = HashMap::new();
             let mut name: String = "".into();
@@ -52,7 +51,7 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
                 let mut decompressed = Vec::new();
 
                 let mut decoder = GzDecoder::new(sample.raw_profile.as_slice());
-                if let Some(_) = decoder.header() {
+                if decoder.header().is_none() {
                     if let Err(e) = decoder.read_to_end(&mut decompressed) {
                         bail!("Failed to decompress gzip: {}", e);
                     }

@@ -84,12 +84,7 @@ impl<'data> Liner<'data> {
                 self.elfdbginfo,
                 self.demangler,
             )?))
-        }
-        // else if quality.has_go_pclntab {
-        // Ok(addr_to_line::go(self.elfdbginfo, self.demangler)?)
-        // Ok(LinerKind::Go)
-        // }
-        else if quality.has_symtab || quality.has_dynsym {
+        } else if quality.has_symtab || quality.has_dynsym {
             // Ok(addr_to_line::symbols(self.elfdbginfo, self.demangler)?)
             Ok(LinerKind::Symbol(addr_to_line::symbol(
                 self.elfdbginfo,
@@ -99,5 +94,10 @@ impl<'data> Liner<'data> {
         } else {
             bail!("LinerError: Check debuginfo quality.");
         }
+
+        // else if quality.has_go_pclntab {
+        // Ok(addr_to_line::go(self.elfdbginfo, self.demangler)?)
+        // Ok(LinerKind::Go)
+        // }
     }
 }

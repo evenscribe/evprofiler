@@ -6,7 +6,6 @@ use crate::{
 };
 use anyhow::bail;
 use object::{Object, ObjectSection, ObjectSymbol, RelocationTarget};
-use tonic::Status;
 
 #[derive(Clone, Debug)]
 struct SymbolInfo {
@@ -16,18 +15,18 @@ struct SymbolInfo {
 
 pub struct SymbolLiner<'data> {
     symbols: Vec<SymbolInfo>,
-    file_name: String,
+    // file_name: String,
     demangler: &'data Demangler,
 }
 
 impl<'data> SymbolLiner<'data> {
     pub fn try_new(
         elfdbginfo: &'data ElfDebugInfo,
-        filename: &str,
+        _: &str,
         demangler: &'data Demangler,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            file_name: filename.to_string(),
+            // file_name: filename.to_string(),
             symbols: Self::symtab(elfdbginfo),
             demangler,
         })
@@ -64,18 +63,15 @@ impl<'data> SymbolLiner<'data> {
         if let Some(plt_section) = elfdbginfo.e.section_by_name(".plt") {
             let relocations = plt_section.relocations();
             for (offset, reloc) in relocations {
-                match reloc.target() {
-                    RelocationTarget::Symbol(symbol_index) => {
-                        if let Ok(symbol) = elfdbginfo.e.symbol_by_index(symbol_index) {
-                            if let Ok(name) = symbol.name() {
-                                symbols.push(SymbolInfo {
-                                    address: offset,
-                                    name: format!("{}@plt", name),
-                                });
-                            }
+                if let RelocationTarget::Symbol(symbol_index) = reloc.target() {
+                    if let Ok(symbol) = elfdbginfo.e.symbol_by_index(symbol_index) {
+                        if let Ok(name) = symbol.name() {
+                            symbols.push(SymbolInfo {
+                                address: offset,
+                                name: format!("{}@plt", name),
+                            });
                         }
                     }
-                    _ => {}
                 }
             }
         }

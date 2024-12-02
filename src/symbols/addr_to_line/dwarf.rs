@@ -3,7 +3,6 @@ use crate::{metapb, profile, symbolizer::ElfDebugInfo, symbols::Demangler};
 use addr2line::LookupResult;
 use object::{Object, ObjectSection};
 use std::borrow;
-use tonic::Status;
 
 pub struct DwarfLiner<'data> {
     elfdbginfo: &'data ElfDebugInfo<'data>,
@@ -71,12 +70,7 @@ impl<'data> DwarfLiner<'data> {
             }
         }?;
 
-        loop {
-            let frame = match result.next()? {
-                Some(frame) => frame,
-                None => break,
-            };
-
+        while let Some(frame) = result.next()? {
             let function = match frame.function {
                 Some(function) => function,
                 None => continue,
