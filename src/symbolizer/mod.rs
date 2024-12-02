@@ -1,9 +1,9 @@
+mod cache;
 pub mod liner;
 pub mod normalize;
 
 use self::debuginfopb::Debuginfo;
 use crate::debuginfo_store::DebuginfoFetcher;
-use crate::profile::LocationLine;
 use crate::symbols::{elfutils, Demangler};
 use crate::{debuginfo_store::MetadataStore, profile::Location};
 use crate::{
@@ -11,40 +11,14 @@ use crate::{
     profile::executableinfo::{ExecutableInfo, Mapping},
 };
 use anyhow::{bail, Context};
+pub use cache::SymbolizerCache;
 use liner::Liner;
 use normalize::NormalizedAddress;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::MutexGuard;
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 use tonic::Status;
-
-#[derive(Default, Debug, Clone)]
-pub struct SymbolizerCache {
-    pub(crate) c: HashMap<String, String>,
-}
-
-impl SymbolizerCache {
-    fn get(
-        &self,
-        build_id: &str,
-        addr: &NormalizedAddress,
-    ) -> Result<Option<Vec<LocationLine>>, Status> {
-        Ok(None)
-    }
-
-    fn set(
-        &self,
-        build_id: &str,
-        addr: &NormalizedAddress,
-        clone: Vec<LocationLine>,
-    ) -> Result<(), Status> {
-        Ok(())
-    }
-}
 
 #[derive(Debug)]
 pub struct Symbolizer {

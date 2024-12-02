@@ -6,13 +6,24 @@ mod utils;
 use crate::metapb::{Function, Mapping};
 use arrow::record_batch::RecordBatch;
 pub use encode::PprofLocations;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 pub use utils::symbolize_locations;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocationLine {
     pub line: i64,
     pub function: Option<Function>,
+}
+
+impl LocationLine {
+    pub fn decode(decoded: &[u8]) -> anyhow::Result<LocationLine> {
+        Ok(bincode::deserialize(decoded)?)
+    }
+
+    pub fn encode(&self) -> anyhow::Result<Vec<u8>> {
+        Ok(bincode::serialize(self)?)
+    }
 }
 
 #[derive(Debug, Default, Clone)]
