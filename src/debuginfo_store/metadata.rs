@@ -2,23 +2,26 @@ use self::debuginfopb::{debuginfo::Source, debuginfo_upload, DebuginfoUpload};
 use crate::debuginfopb::{self, Debuginfo, DebuginfoType};
 use anyhow::bail;
 use chrono::{DateTime, Utc};
+use moka::sync::Cache;
 use prost_types::Timestamp;
-use std::collections::HashMap;
-use tonic::Status;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MetadataStore {
-    store: HashMap<String, Debuginfo>,
+    pub store: Cache<String, Debuginfo>,
 }
 
 impl MetadataStore {
     pub fn new() -> Self {
         Self {
-            store: HashMap::new(),
+            store: Cache::new(10_000),
         }
     }
 
-    pub fn fetch(&self, build_id: &str, req_type: &DebuginfoType) -> Option<&Debuginfo> {
+    pub fn with_store(store: Cache<String, Debuginfo>) -> Self {
+        Self { store }
+    }
+
+    pub fn fetch(&self, build_id: &str, req_type: &DebuginfoType) -> Option<Debuginfo> {
         let path = Self::get_object_path(build_id, req_type);
         self.store.get(&path)
     }
@@ -32,21 +35,26 @@ impl MetadataStore {
     }
 
     pub fn set_quality(
-        &mut self,
+        &self,
         build_id: &str,
         quality: &debuginfopb::DebuginfoQuality,
         req_type: &DebuginfoType,
-    ) -> Result<(), Status> {
+    ) -> anyhow::Result<()> {
         let path = Self::get_object_path(build_id, req_type);
-        let _ = self
-            .store
-            .entry(path)
-            .and_modify(|mdata| mdata.quality = Some(*quality));
+        let mut entry = match self.store.get(&path) {
+            Some(e) => e,
+            None => {
+                bail!("Debuginfo not found");
+            }
+        };
+
+        entry.quality = Some(*quality);
+        self.store.insert(path, entry);
         Ok(())
     }
 
     pub fn mark_as_debuginfod_source(
-        &mut self,
+        &self,
         servers: Vec<String>,
         build_id: &str,
         req_type: &DebuginfoType,
@@ -62,7 +70,7 @@ impl MetadataStore {
     }
 
     pub fn mark_as_uploading(
-        &mut self,
+        &self,
         build_id: &str,
         upload_id: &str,
         hash: &str,
@@ -89,7 +97,7 @@ impl MetadataStore {
     }
 
     pub fn mark_as_uploaded(
-        &mut self,
+        &self,
         build_id: &str,
         upload_id: &str,
         req_type: &DebuginfoType,
@@ -123,7 +131,7 @@ impl MetadataStore {
         self.write(debug_info)
     }
 
-    pub fn write(&mut self, debuginfo: Debuginfo) -> anyhow::Result<()> {
+    pub fn write(&self, debuginfo: Debuginfo) -> anyhow::Result<()> {
         if debuginfo.build_id.is_empty() {
             bail!("build_id is empty. REQUIRED to write debuginfo metadata");
         }

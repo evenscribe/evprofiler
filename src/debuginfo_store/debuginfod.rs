@@ -1,13 +1,24 @@
 use anyhow::{bail, Context};
-use std::{collections::HashMap, time::Duration};
+use object_store::ObjectStore;
+use std::{sync::Arc, time::Duration};
 use tonic::Status;
 use url::Url;
 
 #[derive(Debug)]
 pub struct DebugInfod {
     pub upstream_servers: Vec<Url>,
-    bucket: HashMap<String, Vec<u8>>,
+    bucket: Arc<dyn ObjectStore>,
     client: ureq::Agent,
+}
+
+impl Clone for DebugInfod {
+    fn clone(&self) -> Self {
+        Self {
+            upstream_servers: self.upstream_servers.clone(),
+            bucket: Arc::clone(&self.bucket),
+            client: self.client.clone(),
+        }
+    }
 }
 
 impl Default for DebugInfod {
@@ -16,7 +27,7 @@ impl Default for DebugInfod {
 
         Self {
             upstream_servers: vec![url],
-            bucket: HashMap::new(),
+            bucket: Arc::new(crate::storage::new_memory_bucket()),
             client: ureq::AgentBuilder::new()
                 .timeout_read(Duration::from_secs(5))
                 .timeout_write(Duration::from_secs(5))
@@ -27,34 +38,36 @@ impl Default for DebugInfod {
 }
 
 impl DebugInfod {
-    pub fn exists(&mut self, build_id: &str) -> Vec<String> {
+    pub async fn exists(&self, build_id: &str) -> Vec<String> {
         let mut available_servers = vec![];
 
         let vec = self.upstream_servers.clone();
         for server in vec {
-            if self.get(&server, build_id).is_ok() {
+            if self.get(&server, build_id).await.is_ok() {
                 available_servers.push(server.to_string());
             }
         }
         available_servers
     }
 
-    pub fn get(&mut self, upstream_server: &Url, build_id: &str) -> anyhow::Result<&[u8]> {
-        self.debuginfo_request(upstream_server, build_id)
+    pub async fn get(&self, upstream_server: &Url, build_id: &str) -> anyhow::Result<Vec<u8>> {
+        self.debuginfo_request(upstream_server, build_id).await
     }
 
-    fn debuginfo_request(
-        &mut self,
+    async fn debuginfo_request(
+        &self,
         upstream_server: &Url,
         build_id: &str,
-    ) -> anyhow::Result<&[u8]> {
+    ) -> anyhow::Result<Vec<u8>> {
         let url = upstream_server.join(format!("buildid/{}/debuginfo", build_id).as_str())?;
 
-        self.request(url)
+        self.request(url).await
     }
 
-    fn request(&mut self, url: Url) -> anyhow::Result<&[u8]> {
-        if !self.bucket.contains_key(url.as_str()) {
+    async fn request(&self, url: Url) -> anyhow::Result<Vec<u8>> {
+        let path = object_store::path::Path::from(url.as_str());
+        let res = self.bucket.get(&path).await?.bytes().await?;
+        if res.is_empty() {
             let response =
                 self.client.get(url.as_str()).call().map_err(|err| {
                     Status::internal(format!("Failed to fetch debuginfo: {}", err))
@@ -69,13 +82,14 @@ impl DebugInfod {
                         format!("Failed to read response from the debuginfod server")
                     })?;
 
-                self.bucket.insert(url.to_string(), content);
+                let _ = self.bucket.put(&path, content.clone().into());
+                return Ok(content);
             } else {
                 bail!("Failed to fetch debuginfo: {}", response.status());
             }
+        } else {
+            return Ok(res.to_vec());
         }
-
-        Ok(self.bucket.get(url.as_str()).unwrap())
     }
 }
 

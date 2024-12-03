@@ -15,6 +15,7 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 pub use debuginfod::DebugInfod;
 pub use fetcher::DebuginfoFetcher;
 pub use metadata::MetadataStore;
+use object_store::ObjectStore;
 use std::collections::HashMap;
 use std::result::Result;
 use std::sync::{Arc, Mutex};
@@ -62,11 +63,11 @@ impl TryFrom<upload_request::Data> for UploadRequestInfo {
 }
 
 pub struct DebuginfoStore {
-    pub(crate) metadata: Arc<Mutex<MetadataStore>>,
-    pub(crate) debuginfod: Arc<Mutex<DebugInfod>>,
+    pub(crate) metadata: MetadataStore,
+    pub(crate) debuginfod: DebugInfod,
     pub(crate) max_upload_duration: Duration,
     pub(crate) max_upload_size: i64,
-    pub(crate) bucket: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    pub(crate) bucket: Arc<dyn ObjectStore>,
 }
 
 #[async_trait]
@@ -96,21 +97,15 @@ impl DebuginfoService for DebuginfoStore {
         let upload_info = UploadRequestInfo::try_from(data)?;
         let _ = self.validate_buildid(&upload_info.buildid)?;
 
-        let dbginfo = {
-            let metadata = self
-                .metadata
-                .lock()
-                .map_err(|_| Status::internal("Failed to lock metadata"))?;
-
-            metadata
-                .fetch(&upload_info.buildid, &upload_info.debuginfo_type)
-                .ok_or_else(|| {
-                    Status::failed_precondition(
+        let dbginfo = self
+            .metadata
+            .fetch(&upload_info.buildid, &upload_info.debuginfo_type)
+            .ok_or_else(|| {
+                Status::failed_precondition(
                 "metadata not found, this indicates that the upload was not previously initiated"
             )
-                })?
-                .clone()
-        };
+            })?
+            .clone();
 
         let upload = dbginfo.upload.ok_or_else(|| {
             Status::invalid_argument(
@@ -141,13 +136,22 @@ impl DebuginfoService for DebuginfoStore {
 
         let size = chunks.len() as u64;
 
+        match self
+            .bucket
+            .put(
+                &object_store::path::Path::from(upload_info.upload_id),
+                chunks.into(),
+            )
+            .await
         {
-            let mut bucket = self
-                .bucket
-                .lock()
-                .map_err(|_| Status::internal("Failed to lock bucket"))?;
-            bucket.insert(upload_info.upload_id, chunks);
-        }
+            Ok(_) => {}
+            Err(e) => {
+                return Err(Status::internal(format!(
+                    "Failed to store debuginfo: {}",
+                    e
+                )))
+            }
+        };
 
         Ok(Response::new(UploadResponse {
             build_id: upload_info.buildid,
@@ -166,19 +170,11 @@ impl DebuginfoService for DebuginfoStore {
         let request = request.into_inner();
         let _ = self.validate_buildid(&request.build_id)?;
 
-        let debuginfo = {
-            let metadata = self
-                .metadata
-                .lock()
-                .map_err(|_| Status::internal("Failed to lock metadata"))?;
-            metadata
-                .fetch(&request.build_id, &request.r#type())
-                .cloned()
-        };
+        let debuginfo = self.metadata.fetch(&request.build_id, &request.r#type());
 
         match debuginfo {
             Some(info) => self.handle_existing_debuginfo(&request, &info),
-            None => self.handle_new_build_id(&request),
+            None => Box::pin(self.handle_new_build_id(&request)).await,
         }
     }
 
@@ -232,11 +228,8 @@ impl DebuginfoService for DebuginfoStore {
         // let upload_expired = upload_started + self.max_upload_duration;
 
         {
-            let mut metadata = self
+            let _ = self
                 .metadata
-                .lock()
-                .map_err(|_| Status::internal("Failed to lock metadata"))?;
-            let _ = metadata
                 .mark_as_uploading(
                     &request.build_id,
                     &upload_id,
@@ -270,22 +263,17 @@ impl DebuginfoService for DebuginfoStore {
 
         let request = request.into_inner();
         let _ = self.validate_buildid(&request.build_id)?;
-        {
-            let mut metadata = self
-                .metadata
-                .lock()
-                .map_err(|_| Status::internal("Failed to lock metadata"))?;
-            let _ = metadata
-                .mark_as_uploaded(
-                    &request.build_id,
-                    &request.upload_id,
-                    &request.r#type(),
-                    self.time_now(),
-                )
-                .map_err(|e| {
-                    Status::internal(format!("Failed to mark metadata as uploaded. details: {e}"))
-                })?;
-        }
+        let _ = self
+            .metadata
+            .mark_as_uploaded(
+                &request.build_id,
+                &request.upload_id,
+                &request.r#type(),
+                self.time_now(),
+            )
+            .map_err(|e| {
+                Status::internal(format!("Failed to mark metadata as uploaded. details: {e}"))
+            })?;
         Ok(Response::new(MarkUploadFinishedResponse::default()))
     }
 }
@@ -442,7 +430,7 @@ impl DebuginfoStore {
         }))
     }
 
-    fn handle_new_build_id(
+    async fn handle_new_build_id(
         &self,
         request: &ShouldInitiateUploadRequest,
     ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
@@ -456,27 +444,14 @@ impl DebuginfoStore {
             }));
         }
 
-        let exists = {
-            let mut debuginfod = self
-                .debuginfod
-                .lock()
-                .map_err(|_| Status::internal("Failed to lock debuginfod"))?;
-            debuginfod.exists(&request.build_id)
-        };
+        // Check existence outside of the lock
+        let build_id = request.build_id.clone();
+        let exists = self.debuginfod.exists(&build_id).await;
 
         if !exists.is_empty() {
-            {
-                let mut metadata = self
-                    .metadata
-                    .lock()
-                    .map_err(|_| Status::internal("Failed to lock metadata"))?;
-                let _ = metadata.mark_as_debuginfod_source(
-                    exists,
-                    &request.build_id,
-                    &request.r#type(),
-                );
-            }
-
+            let _ = self
+                .metadata
+                .mark_as_debuginfod_source(exists, &build_id, &request.r#type());
             Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: false,
                 reason: REASON_DEBUGINFO_IN_DEBUGINFOD.into(),

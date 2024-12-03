@@ -328,7 +328,7 @@ fn serialize_pprof_stacktrace(
     Ok(stacktrace)
 }
 
-pub fn write_raw_request_to_arrow_record(
+pub async fn write_raw_request_to_arrow_record(
     request: &WriteRawRequest,
     symbolizer: Arc<Symbolizer>,
 ) -> anyhow::Result<RecordBatch> {
@@ -341,7 +341,8 @@ pub fn write_raw_request_to_arrow_record(
                     let x = profile::symbolize_locations(
                         ns.locations.as_slice(),
                         Arc::clone(&symbolizer),
-                    )?;
+                    )
+                    .await?;
                     log::warn!("{:#?}", x.first().take());
                     return Ok(RecordBatch::new_empty(Arc::new(schema::create_schema(
                         &normalized_request.all_label_names,

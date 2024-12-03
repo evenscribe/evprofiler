@@ -98,7 +98,7 @@ pub struct MappingLocations {
     locations: HashMap<u64, super::Location>,
 }
 
-pub fn symbolize_locations(
+pub async fn symbolize_locations(
     locations: &[Vec<u8>],
     symbolizer: Arc<crate::symbolizer::Symbolizer>,
 ) -> anyhow::Result<Vec<super::Location>> {
@@ -167,7 +167,7 @@ pub fn symbolize_locations(
         }
 
         // Mutate the request in-place
-        symbolizer.symbolize(&mut sym_req)?;
+        symbolizer.symbolize(&mut sym_req).await?;
 
         // Extract symbolized locations from the mutated request
         for mapping in sym_req.mappings {

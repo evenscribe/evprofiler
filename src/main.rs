@@ -6,6 +6,7 @@ use std::{
 use chrono::TimeDelta;
 use debuginfo_store::DebuginfoFetcher;
 use debuginfopb::debuginfo_service_server::DebuginfoServiceServer;
+use object_store::ObjectStore;
 use profilestorepb::{
     agents_service_server::AgentsServiceServer,
     profile_store_service_server::ProfileStoreServiceServer,
@@ -17,6 +18,7 @@ mod debuginfo_store;
 mod normalizer;
 mod profile;
 mod profile_store;
+mod storage;
 mod symbolizer;
 mod symbols;
 
@@ -40,12 +42,12 @@ pub(crate) mod debuginfopb {
 async fn main() -> anyhow::Result<()> {
     colog::init();
 
-    let metadata_store = Arc::new(Mutex::new(debuginfo_store::MetadataStore::new()));
-    let debuginfod = Arc::new(Mutex::new(debuginfo_store::DebugInfod::default()));
-    let bucket: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::from(HashMap::new()));
+    let metadata_store = debuginfo_store::MetadataStore::new();
+    let debuginfod = debuginfo_store::DebugInfod::default();
+    let bucket: Arc<dyn ObjectStore> = Arc::new(storage::new_memory_bucket());
     let symbolizer = Arc::new(symbolizer::Symbolizer::new(
-        Arc::clone(&metadata_store),
-        DebuginfoFetcher::new(Arc::clone(&bucket), Arc::clone(&debuginfod)),
+        debuginfo_store::MetadataStore::with_store(metadata_store.store.clone()),
+        DebuginfoFetcher::new(Arc::clone(&bucket), debuginfod.clone()),
     ));
 
     log::info!("Starting Server");
@@ -60,8 +62,8 @@ async fn main() -> anyhow::Result<()> {
 
     log::info!("Attaching DebugInfo to the server");
     let debug_store_impl = debuginfo_store::DebuginfoStore {
-        metadata: Arc::clone(&metadata_store),
-        debuginfod: Arc::clone(&debuginfod),
+        metadata: metadata_store,
+        debuginfod: debuginfod,
         max_upload_duration: TimeDelta::new(60 * 15, 0).unwrap(),
         max_upload_size: 1000000000,
         bucket: Arc::clone(&bucket),
