@@ -1,8 +1,3 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
-
 use chrono::TimeDelta;
 use debuginfo_store::DebuginfoFetcher;
 use debuginfopb::debuginfo_service_server::DebuginfoServiceServer;
@@ -11,6 +6,7 @@ use profilestorepb::{
     agents_service_server::AgentsServiceServer,
     profile_store_service_server::ProfileStoreServiceServer,
 };
+use std::sync::Arc;
 use tonic::{codec::CompressionEncoding, transport::Server};
 
 mod agent_store;
@@ -63,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
     log::info!("Attaching DebugInfo to the server");
     let debug_store_impl = debuginfo_store::DebuginfoStore {
         metadata: metadata_store,
-        debuginfod: debuginfod,
+        debuginfod,
         max_upload_duration: TimeDelta::new(60 * 15, 0).unwrap(),
         max_upload_size: 1000000000,
         bucket: Arc::clone(&bucket),
@@ -71,7 +67,12 @@ async fn main() -> anyhow::Result<()> {
 
     log::info!("Starting server at {}", addr);
     Server::builder()
-        .add_service(ProfileStoreServiceServer::new(profile_store_impl))
+        .add_service(
+            ProfileStoreServiceServer::new(profile_store_impl)
+                .accept_compressed(CompressionEncoding::Gzip)
+                .max_decoding_message_size(1000000000)
+                .max_encoding_message_size(1000000000),
+        )
         .add_service(AgentsServiceServer::new(agent_store_impl))
         .add_service(
             DebuginfoServiceServer::new(debug_store_impl)

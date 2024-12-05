@@ -6,15 +6,9 @@ use crate::profile::{self, schema, Meta, PprofLocations, ValueType};
 use crate::profilestorepb::{ExecutableInfo, WriteRawRequest};
 use crate::symbolizer::Symbolizer;
 use anyhow::bail;
-use arrow::array::{
-    ArrayRef, BinaryDictionaryBuilder, GenericByteDictionaryBuilder, Int64Builder, ListBuilder,
-};
-use arrow::datatypes::{GenericBinaryType, Int32Type};
 use arrow::record_batch::RecordBatch;
 use std::collections::{HashMap, HashSet};
-use std::result::Result;
 use std::sync::Arc;
-use tonic::Status;
 
 const NANOS_PER_MILLI: i64 = 1_000_000;
 
