@@ -51,7 +51,7 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
                 let mut decompressed = Vec::new();
 
                 let mut decoder = GzDecoder::new(sample.raw_profile.as_slice());
-                if decoder.header().is_none() {
+                if decoder.header().is_some() {
                     if let Err(e) = decoder.read_to_end(&mut decompressed) {
                         bail!("Failed to decompress gzip: {}", e);
                     }
