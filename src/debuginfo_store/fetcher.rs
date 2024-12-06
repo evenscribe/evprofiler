@@ -1,9 +1,8 @@
-use anyhow::bail;
-use object_store::ObjectStore;
-
 use super::DebugInfod;
 use crate::debuginfopb::{debuginfo::Source, Debuginfo};
-use std::sync::{Arc, Mutex};
+use anyhow::bail;
+use object_store::ObjectStore;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct DebuginfoFetcher {

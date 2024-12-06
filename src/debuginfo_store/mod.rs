@@ -242,7 +242,7 @@ impl DebuginfoService for DebuginfoStore {
     async fn mark_upload_finished(
         &self,
         request: Request<MarkUploadFinishedRequest>,
-    ) -> Result<Response<MarkUploadFinishedResponse>, Status> {
+    ) -> anyhow::Result<Response<MarkUploadFinishedResponse>, Status> {
         // log::info!("MarkUploadFinished request received");
 
         let request = request.into_inner();
@@ -263,7 +263,7 @@ impl DebuginfoService for DebuginfoStore {
 }
 
 impl DebuginfoStore {
-    fn validate_buildid(&self, id: &str) -> Result<(), Status> {
+    fn validate_buildid(&self, id: &str) -> anyhow::Result<(), Status> {
         if id.len() <= 2 {
             return Err(Status::invalid_argument("unexpectedly short input"));
         }
@@ -293,7 +293,7 @@ impl DebuginfoStore {
         &self,
         request: &ShouldInitiateUploadRequest,
         debuginfo: &Debuginfo,
-    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+    ) -> anyhow::Result<Response<ShouldInitiateUploadResponse>, Status> {
         match Source::try_from(debuginfo.source) {
             Ok(Source::Debuginfod) => self.handle_debuginfod_source(debuginfo),
             Ok(Source::Upload) => self.handle_upload_source(request, debuginfo),
@@ -305,7 +305,7 @@ impl DebuginfoStore {
         &self,
         request: &ShouldInitiateUploadRequest,
         debuginfo: &Debuginfo,
-    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+    ) -> anyhow::Result<Response<ShouldInitiateUploadResponse>, Status> {
         let upload = debuginfo
             .upload
             .as_ref()
@@ -323,7 +323,7 @@ impl DebuginfoStore {
     fn handle_uploading_state(
         &self,
         upload: &DebuginfoUpload,
-    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+    ) -> anyhow::Result<Response<ShouldInitiateUploadResponse>, Status> {
         if self.is_upload_stale(upload) {
             Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: true,
@@ -341,7 +341,7 @@ impl DebuginfoStore {
         &self,
         request: &ShouldInitiateUploadRequest,
         debuginfo: &Debuginfo,
-    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+    ) -> anyhow::Result<Response<ShouldInitiateUploadResponse>, Status> {
         if !self.is_valid_elf(debuginfo) {
             return self.handle_invalid_elf(request);
         }
@@ -366,7 +366,7 @@ impl DebuginfoStore {
     fn handle_invalid_elf(
         &self,
         request: &ShouldInitiateUploadRequest,
-    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+    ) -> anyhow::Result<Response<ShouldInitiateUploadResponse>, Status> {
         Ok(Response::new(ShouldInitiateUploadResponse {
             should_initiate_upload: request.force,
             reason: if request.force {
@@ -381,7 +381,7 @@ impl DebuginfoStore {
         &self,
         request: &ShouldInitiateUploadRequest,
         debuginfo: &Debuginfo,
-    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+    ) -> anyhow::Result<Response<ShouldInitiateUploadResponse>, Status> {
         match &debuginfo.upload {
             Some(upload) if upload.hash.eq(&request.hash) => {
                 Ok(Response::new(ShouldInitiateUploadResponse {
@@ -403,7 +403,7 @@ impl DebuginfoStore {
     fn handle_debuginfod_source(
         &self,
         debuginfo: &Debuginfo,
-    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+    ) -> anyhow::Result<Response<ShouldInitiateUploadResponse>, Status> {
         Ok(Response::new(ShouldInitiateUploadResponse {
             should_initiate_upload: true,
             reason: if !self.is_valid_elf(debuginfo) {
@@ -417,7 +417,7 @@ impl DebuginfoStore {
     async fn handle_new_build_id(
         &self,
         request: &ShouldInitiateUploadRequest,
-    ) -> Result<Response<ShouldInitiateUploadResponse>, Status> {
+    ) -> anyhow::Result<Response<ShouldInitiateUploadResponse>, Status> {
         if !matches!(
             request.build_id_type(),
             BuildIdType::Gnu | BuildIdType::UnknownUnspecified
