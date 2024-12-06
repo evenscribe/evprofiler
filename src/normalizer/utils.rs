@@ -328,24 +328,6 @@ pub async fn write_raw_request_to_arrow_record(
 ) -> anyhow::Result<RecordBatch> {
     let normalized_request = NormalizedWriteRawRequest::try_from(request)?;
 
-    for series in normalized_request.series.iter() {
-        for sample in series.samples.iter() {
-            for np in sample.iter() {
-                for ns in np.samples.iter() {
-                    let x = profile::symbolize_locations(
-                        ns.locations.as_slice(),
-                        Arc::clone(&symbolizer),
-                    )
-                    .await?;
-                    log::warn!("{:#?}", x.first().take());
-                    return Ok(RecordBatch::new_empty(Arc::new(schema::create_schema(
-                        &normalized_request.all_label_names,
-                    ))));
-                }
-            }
-        }
-    }
-
     Ok(RecordBatch::new_empty(Arc::new(schema::create_schema(
         &normalized_request.all_label_names,
     ))))

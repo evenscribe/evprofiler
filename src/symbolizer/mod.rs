@@ -16,8 +16,6 @@ use liner::Liner;
 use normalize::NormalizedAddress;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::MutexGuard;
-use std::sync::{Arc, Mutex};
 use tonic::Status;
 
 #[derive(Debug)]
