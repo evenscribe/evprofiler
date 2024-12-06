@@ -1,6 +1,7 @@
 mod debuginfod;
 mod fetcher;
 mod metadata;
+mod reasons;
 
 use self::debuginfopb::{
     debuginfo_upload::State, upload_instructions::UploadStrategy, upload_request, DebuginfoType,
@@ -16,28 +17,11 @@ pub use debuginfod::DebugInfod;
 pub use fetcher::DebuginfoFetcher;
 pub use metadata::MetadataStore;
 use object_store::ObjectStore;
-use std::collections::HashMap;
+use reasons::DebugInfoUploadReason;
 use std::result::Result;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio_stream::StreamExt;
 use tonic::{async_trait, Request, Response, Status, Streaming};
-
-const REASON_DEBUGINFO_IN_DEBUGINFOD: &str =
-    "Debuginfo exists in debuginfod, therefore no upload is necessary.";
-const REASON_FIRST_TIME_SEEN: &str = "First time we see this Build ID, and it does not exist in debuginfod, therefore please upload!";
-const REASON_UPLOAD_STALE: &str =
-    "A previous upload was started but not finished and is now stale, so it can be retried.";
-const REASON_UPLOAD_IN_PROGRESS: &str =
-    "A previous upload is still in-progress and not stale yet (only stale uploads can be retried).";
-const REASON_DEBUGINFO_ALREADY_EXISTS: &str =
-    "Debuginfo already exists and is not marked as invalid, therefore no new upload is needed.";
-const REASON_DEBUGINFO_ALREADY_EXISTS_BUT_FORCED: &str = "Debuginfo already exists and is not marked as invalid, therefore wouldn't have accepted a new upload, but accepting it because it's requested to be forced.";
-const REASON_DEBUGINFO_INVALID: &str = "Debuginfo already exists but is marked as invalid, therefore a new upload is needed. Hash the debuginfo and initiate the upload.";
-const REASON_DEBUGINFO_EQUAL: &str = "Debuginfo already exists and is marked as invalid, but the proposed hash is the same as the one already available, therefore the upload is not accepted as it would result in the same invalid debuginfos.";
-const REASON_DEBUGINFO_NOT_EQUAL: &str =
-    "Debuginfo already exists but is marked as invalid, therefore a new upload will be accepted.";
-const REASON_DEBUGINFOD_SOURCE: &str = "Debuginfo is available from debuginfod already and not marked as invalid, therefore no new upload is needed.";
-const REASON_DEBUGINFOD_INVALID: &str = "Debuginfo is available from debuginfod already but is marked as invalid, therefore a new upload is needed.";
 
 pub struct UploadRequestInfo {
     buildid: String,
@@ -209,7 +193,7 @@ impl DebuginfoService for DebuginfoStore {
         if !should_initiate.should_initiate_upload {
             if should_initiate
                 .reason
-                .eq_ignore_ascii_case(REASON_DEBUGINFO_EQUAL)
+                .eq_ignore_ascii_case(&DebugInfoUploadReason::DebugInfoEqual.to_string())
             {
                 return Err(Status::already_exists("Debuginfo already exists"));
             }
@@ -343,12 +327,12 @@ impl DebuginfoStore {
         if self.is_upload_stale(upload) {
             Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: true,
-                reason: REASON_UPLOAD_STALE.into(),
+                reason: DebugInfoUploadReason::UploadStale.to_string(),
             }))
         } else {
             Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: false,
-                reason: REASON_UPLOAD_IN_PROGRESS.into(),
+                reason: DebugInfoUploadReason::UploadInProgress.to_string(),
             }))
         }
     }
@@ -365,7 +349,7 @@ impl DebuginfoStore {
         if request.hash.is_empty() {
             return Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: true,
-                reason: REASON_DEBUGINFO_INVALID.into(),
+                reason: DebugInfoUploadReason::DebugInfoInvalid.to_string(),
             }));
         }
 
@@ -386,9 +370,9 @@ impl DebuginfoStore {
         Ok(Response::new(ShouldInitiateUploadResponse {
             should_initiate_upload: request.force,
             reason: if request.force {
-                REASON_DEBUGINFO_ALREADY_EXISTS_BUT_FORCED.into()
+                DebugInfoUploadReason::DebugInfoAlreadyExistsButForced.to_string()
             } else {
-                REASON_DEBUGINFO_ALREADY_EXISTS.into()
+                DebugInfoUploadReason::DebugInfoAlreadyExists.to_string()
             },
         }))
     }
@@ -402,16 +386,16 @@ impl DebuginfoStore {
             Some(upload) if upload.hash.eq(&request.hash) => {
                 Ok(Response::new(ShouldInitiateUploadResponse {
                     should_initiate_upload: false,
-                    reason: REASON_DEBUGINFO_EQUAL.into(),
+                    reason: DebugInfoUploadReason::DebugInfoEqual.to_string(),
                 }))
             }
             Some(_) => Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: true,
-                reason: REASON_DEBUGINFO_NOT_EQUAL.into(),
+                reason: DebugInfoUploadReason::DebugInfoNotEqual.to_string(),
             })),
             None => Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: true,
-                reason: REASON_DEBUGINFO_INVALID.into(),
+                reason: DebugInfoUploadReason::DebugInfoInvalid.to_string(),
             })),
         }
     }
@@ -423,9 +407,9 @@ impl DebuginfoStore {
         Ok(Response::new(ShouldInitiateUploadResponse {
             should_initiate_upload: true,
             reason: if !self.is_valid_elf(debuginfo) {
-                REASON_DEBUGINFOD_SOURCE.into()
+                DebugInfoUploadReason::DebugInfodSource.to_string()
             } else {
-                REASON_DEBUGINFOD_INVALID.into()
+                DebugInfoUploadReason::DebugInfoInvalid.to_string()
             },
         }))
     }
@@ -440,7 +424,7 @@ impl DebuginfoStore {
         ) {
             return Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: true,
-                reason: REASON_FIRST_TIME_SEEN.into(),
+                reason: DebugInfoUploadReason::FirstTimeSeen.to_string(),
             }));
         }
 
@@ -454,12 +438,12 @@ impl DebuginfoStore {
                 .mark_as_debuginfod_source(exists, &build_id, &request.r#type());
             Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: false,
-                reason: REASON_DEBUGINFO_IN_DEBUGINFOD.into(),
+                reason: DebugInfoUploadReason::DebugInfoInDebugInfod.to_string(),
             }))
         } else {
             Ok(Response::new(ShouldInitiateUploadResponse {
                 should_initiate_upload: true,
-                reason: REASON_FIRST_TIME_SEEN.into(),
+                reason: DebugInfoUploadReason::FirstTimeSeen.to_string(),
             }))
         }
     }
