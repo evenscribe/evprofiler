@@ -67,6 +67,7 @@ impl DebuginfoService for DebuginfoStore {
         let request = match stream.message().await {
             Ok(Some(msg)) => msg,
             Ok(None) => return Err(Status::invalid_argument("Empty request")),
+
             Err(e) => {
                 return Err(Status::internal(format!(
                     "Failed to receive message: {}",
@@ -409,7 +410,7 @@ impl DebuginfoStore {
             reason: if !self.is_valid_elf(debuginfo) {
                 DebugInfoUploadReason::DebugInfodSource.to_string()
             } else {
-                DebugInfoUploadReason::DebugInfoInvalid.to_string()
+                DebugInfoUploadReason::DebugInfodInvalid.to_string()
             },
         }))
     }

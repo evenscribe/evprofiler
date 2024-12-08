@@ -78,17 +78,15 @@ impl DebugInfod {
                 response
                     .into_reader()
                     .read_to_end(&mut content)
-                    .with_context(|| {
-                        format!("Failed to read response from the debuginfod server")
-                    })?;
+                    .with_context(|| "Failed to read response from the debuginfod server")?;
 
-                let _ = self.bucket.put(&path, content.clone().into());
-                return Ok(content);
+                std::mem::drop(self.bucket.put(&path, content.clone().into()));
+                Ok(content)
             } else {
                 bail!("Failed to fetch debuginfo: {}", response.status());
             }
         } else {
-            return Ok(res.to_vec());
+            Ok(res.to_vec())
         }
     }
 }

@@ -4,10 +4,11 @@ use crate::profilestorepb::WriteRawRequest;
 use anyhow::bail;
 use flate2::read::GzDecoder;
 use prost::Message;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NormalizedWriteRawRequest {
     pub(crate) series: Vec<Series>,
     pub(crate) all_label_names: Vec<String>,
