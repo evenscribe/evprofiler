@@ -1,7 +1,8 @@
 use super::NormalizedSample;
 use crate::profile::Meta;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NormalizedProfile {
     pub(crate) samples: Vec<NormalizedSample>,
     pub(crate) meta: Meta,

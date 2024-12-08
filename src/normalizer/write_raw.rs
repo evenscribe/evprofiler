@@ -4,10 +4,11 @@ use crate::profilestorepb::WriteRawRequest;
 use anyhow::bail;
 use flate2::read::GzDecoder;
 use prost::Message;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NormalizedWriteRawRequest {
     pub(crate) series: Vec<Series>,
     pub(crate) all_label_names: Vec<String>,
@@ -51,7 +52,7 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
                 let mut decompressed = Vec::new();
 
                 let mut decoder = GzDecoder::new(sample.raw_profile.as_slice());
-                if decoder.header().is_none() {
+                if decoder.header().is_some() {
                     if let Err(e) = decoder.read_to_end(&mut decompressed) {
                         bail!("Failed to decompress gzip: {}", e);
                     }

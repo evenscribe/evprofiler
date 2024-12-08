@@ -19,7 +19,7 @@ impl ProfileStoreService for ProfileStore {
         &self,
         request: Request<WriteRawRequest>,
     ) -> anyhow::Result<Response<WriteRawResponse>, Status> {
-        let _ = match self.write_series(&request.into_inner()) {
+        let _ = match self.write_series(&request.into_inner()).await {
             Ok(_) => (),
             Err(e) => return Err(Status::internal(e.to_string())),
         };
@@ -63,11 +63,8 @@ impl ProfileStore {
         }
     }
 
-    pub fn write_series(&self, request: &WriteRawRequest) -> anyhow::Result<()> {
-        let record = match normalizer::write_raw_request_to_arrow_record(
-            request,
-            Arc::clone(&self.symbolizer),
-        ) {
+    pub async fn write_series(&self, request: &WriteRawRequest) -> anyhow::Result<()> {
+        let (chunk, schema) = match normalizer::write_raw_request_to_arrow_chunk(request).await {
             Ok(record) => record,
             Err(e) => {
                 bail!(
@@ -77,7 +74,7 @@ impl ProfileStore {
             }
         };
 
-        if record.num_rows() == 0 {
+        if chunk.is_empty() {
             return Ok(());
         }
 

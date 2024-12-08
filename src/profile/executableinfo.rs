@@ -179,7 +179,7 @@ pub fn find_text_prog_hdr(e: &File<'_>) -> i16 {
 
                 if p_flags & PF_X != 0
                     && section_addr >= segment_addr
-                    && section_addr < segment_addr + segment.size()
+                    && section_addr < segment_addr + segment_size
                 {
                     return indx as i16;
                 }

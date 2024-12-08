@@ -16,15 +16,13 @@ use liner::Liner;
 use normalize::NormalizedAddress;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::MutexGuard;
-use std::sync::{Arc, Mutex};
 use tonic::Status;
 
 #[derive(Debug)]
 pub struct Symbolizer {
     pub(crate) demangler: Demangler,
     cache: SymbolizerCache,
-    metadata: Arc<Mutex<MetadataStore>>,
+    metadata: MetadataStore,
     fetcher: DebuginfoFetcher,
     temp_dir: PathBuf,
 }
@@ -49,7 +47,7 @@ pub struct ElfDebugInfo<'data> {
 }
 
 impl Symbolizer {
-    pub fn new(metadata: Arc<Mutex<MetadataStore>>, fetcher: DebuginfoFetcher) -> Self {
+    pub fn new(metadata: MetadataStore, fetcher: DebuginfoFetcher) -> Self {
         Self {
             demangler: Demangler::new(false),
             cache: SymbolizerCache::default(),
@@ -59,14 +57,13 @@ impl Symbolizer {
         }
     }
 
-    pub fn symbolize(&self, request: &mut SymbolizationRequest) -> anyhow::Result<()> {
+    pub async fn symbolize(&self, request: &mut SymbolizationRequest) -> anyhow::Result<()> {
         log::info!("Symbolizing request for build_id: {}", request.build_id);
 
         let build_id = &request.build_id;
 
         let mut dbginfo_md = {
-            let metadata = self.lock_metadata()?;
-            metadata
+            self.metadata
                 .fetch(build_id, &DebuginfoType::DebuginfoUnspecified)
                 .ok_or_else(|| {
                     Status::not_found(format!("Debuginfo for build_id {} not found", build_id))
@@ -79,7 +76,7 @@ impl Symbolizer {
         }
         let _ = Self::validate_source(&dbginfo_md);
 
-        let raw_data = self.fetcher.fetch_raw_elf(&dbginfo_md)?;
+        let raw_data = self.fetcher.fetch_raw_elf(&dbginfo_md).await?;
         let elf_debug_info = self.get_debug_info(&request.build_id, &mut dbginfo_md, &raw_data)?;
 
         let mut l = Liner::new(
@@ -143,14 +140,6 @@ impl Symbolizer {
         Ok(())
     }
 
-    fn lock_metadata(&self) -> anyhow::Result<MutexGuard<MetadataStore>> {
-        let m = self
-            .metadata
-            .lock()
-            .map_err(|_| Status::internal("Failed to lock metadata store"))?;
-        Ok(m)
-    }
-
     fn create_and_write_temp_file(&self, data: &[u8], build_id: &str) -> anyhow::Result<PathBuf> {
         let mut tmp_file = tempfile::NamedTempFile::new_in(&self.temp_dir)
             .map_err(|e| Status::internal(format!("Failed to create temporary file: {}", e)))?;
@@ -172,8 +161,8 @@ impl Symbolizer {
     }
 
     fn update_quality(&self, build_id: &str, quality: DebuginfoQuality) -> anyhow::Result<()> {
-        let mut metadata = self.lock_metadata()?;
-        metadata.set_quality(build_id, &quality, &DebuginfoType::DebuginfoUnspecified)?;
+        self.metadata
+            .set_quality(build_id, &quality, &DebuginfoType::DebuginfoUnspecified)?;
         Ok(())
     }
 
@@ -245,17 +234,20 @@ impl Symbolizer {
 
 #[cfg(test)]
 mod tests {
-    use crate::{debuginfo_store, metapb, profile};
+
+    use object_store::ObjectStore;
+
+    use crate::{debuginfo_store, metapb, profile, storage};
 
     use super::*;
 
     #[test]
     fn symbolization_test() {
-        let metadata_store = Arc::new(Mutex::new(debuginfo_store::MetadataStore::new()));
+        let metadata_store = debuginfo_store::MetadataStore::new();
         let debuginfod = Arc::new(Mutex::new(debuginfo_store::DebugInfod::default()));
-        let bucket: Arc<Mutex<HashMap<String, Vec<u8>>>> = Arc::new(Mutex::from(HashMap::new()));
+        let bucket: Arc<dyn ObjectStore> = Arc::new(storage::new_memory_bucket());
         let symbolizer = Arc::new(Symbolizer::new(
-            Arc::clone(&metadata_store),
+            debuginfo_store::MetadataStore::with_store(metadata_store.store.clone()),
             DebuginfoFetcher::new(Arc::clone(&bucket), Arc::clone(&debuginfod)),
         ));
 
