@@ -1,6 +1,6 @@
 use crate::profilestorepb::profile_store_service_server::ProfileStoreService;
 use crate::profilestorepb::{WriteRawRequest, WriteRawResponse, WriteRequest, WriteResponse};
-use crate::{normalizer, symbolizer};
+use crate::{ingester, normalizer, symbolizer};
 use anyhow::bail;
 use std::sync::Arc;
 use std::{pin::Pin, result::Result};
@@ -10,6 +10,7 @@ use tonic::{Request, Response, Status, Streaming};
 #[derive(Debug)]
 pub struct ProfileStore {
     symbolizer: Arc<symbolizer::Symbolizer>,
+    ingester: Arc<ingester::Ingester>,
 }
 
 #[tonic::async_trait]
@@ -57,14 +58,15 @@ impl ProfileStoreService for ProfileStore {
 }
 
 impl ProfileStore {
-    pub fn new(symbolizer: Arc<symbolizer::Symbolizer>) -> Self {
+    pub fn new(symbolizer: Arc<symbolizer::Symbolizer>, ingester: Arc<ingester::Ingester>) -> Self {
         Self {
             symbolizer: Arc::clone(&symbolizer),
+            ingester: Arc::clone(&ingester),
         }
     }
 
     pub async fn write_series(&self, request: &WriteRawRequest) -> anyhow::Result<()> {
-        let (chunk, schema) = match normalizer::write_raw_request_to_arrow_chunk(request).await {
+        let chunk = match normalizer::write_raw_request_to_arrow_chunk(request).await {
             Ok(record) => record,
             Err(e) => {
                 bail!(
@@ -73,11 +75,12 @@ impl ProfileStore {
                 );
             }
         };
-
         if chunk.is_empty() {
             return Ok(());
         }
 
+        let ingester = Arc::clone(&self.ingester);
+        tokio::spawn(async move { ingester.ingest(chunk).await });
         Ok(())
     }
 }

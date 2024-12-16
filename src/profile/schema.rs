@@ -1,5 +1,7 @@
 use arrow2::datatypes::{DataType, Field, IntegerType, Schema};
 
+use crate::normalizer::POSSIBLE_METADATA_LABELS;
+
 const COLUMN_DURATION: &str = "duration";
 const COLUMN_LABELS: &str = "labels";
 const COLUMN_NAME: &str = "name";
@@ -13,7 +15,7 @@ const COLUMN_STACKTRACE_ITEM: &str = "item";
 const COLUMN_TIMESTAMP: &str = "timestamp";
 const COLUMN_VALUE: &str = "value";
 
-pub fn create_schema(labels: &[String]) -> Schema {
+pub fn create_schema() -> Schema {
     let mut fields = vec![
         Field::new(COLUMN_DURATION, DataType::Int64, false),
         Field::new(
@@ -55,7 +57,7 @@ pub fn create_schema(labels: &[String]) -> Schema {
         Field::new(COLUMN_VALUE, DataType::Int64, false),
     ];
 
-    for label in labels {
+    for label in POSSIBLE_METADATA_LABELS {
         fields.push(Field::new(
             format!("{}.{}", COLUMN_LABELS, label),
             DataType::Dictionary(IntegerType::Int32, Box::new(DataType::Utf8), false),

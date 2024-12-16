@@ -1,16 +1,15 @@
 use super::profile::NormalizedProfile;
 use super::write_raw::NormalizedWriteRawRequest;
-use super::NormalizedSample;
+use super::{NormalizedSample, POSSIBLE_METADATA_LABELS};
 use crate::pprofpb::{Function, Location, Mapping, Profile, Sample};
 use crate::profile::{schema, Meta, PprofLocations, ValueType};
 use crate::profilestorepb::{ExecutableInfo, WriteRawRequest};
 use anyhow::bail;
 use arrow2::array::{
-    Array, BinaryArray, DictionaryArray, Int32Array, Int64Array, ListArray, MutableArray,
-    MutableBinaryArray, MutableDictionaryArray, MutableListArray, MutablePrimitiveArray,
-    MutableUtf8Array, TryPush,
+    Array, DictionaryArray, Int64Array, ListArray, MutableArray, MutableBinaryArray,
+    MutableDictionaryArray, MutableListArray, MutablePrimitiveArray, MutableUtf8Array, TryPush,
 };
-use arrow2::chunk::{self, Chunk};
+use arrow2::chunk::Chunk;
 use arrow2::datatypes::Schema;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -329,7 +328,7 @@ fn serialize_pprof_stacktrace(
 
 pub async fn write_raw_request_to_arrow_chunk(
     request: &WriteRawRequest,
-) -> anyhow::Result<(Chunk<Arc<dyn Array>>, Schema)> {
+) -> anyhow::Result<Chunk<Arc<dyn Array>>> {
     let normalized_request = NormalizedWriteRawRequest::try_from(request)?;
 
     let mut duration_column = MutablePrimitiveArray::new();
@@ -396,7 +395,7 @@ pub async fn write_raw_request_to_arrow_chunk(
         Int64Array::from(value_column).arced(),
     ];
 
-    for name in normalized_request.all_label_names.iter() {
+    for name in POSSIBLE_METADATA_LABELS {
         let mut arr: MutableDictionaryArray<i32, MutableUtf8Array<i32>> =
             MutableDictionaryArray::new();
 
@@ -419,11 +418,10 @@ pub async fn write_raw_request_to_arrow_chunk(
                 }
             }
         }
-        fields.push(DictionaryArray::from(arr).arced());
+        let arr = DictionaryArray::from(arr);
+        //log::info!("labels.{}: {:#?}", name, arr);
+        fields.push(arr.arced());
     }
 
-    Ok((
-        Chunk::new(fields),
-        schema::create_schema(&normalized_request.all_label_names),
-    ))
+    Ok(Chunk::new(fields))
 }

@@ -6,7 +6,8 @@ use flate2::read::GzDecoder;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
+use std::io::{Read, Write};
+use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NormalizedWriteRawRequest {
@@ -57,6 +58,10 @@ impl TryFrom<&WriteRawRequest> for NormalizedWriteRawRequest {
                         bail!("Failed to decompress gzip: {}", e);
                     }
                 }
+
+                //let path: PathBuf = "/tmp".into();
+                //let mut file = std::fs::File::create(&path.join("pp"))?;
+                //let _ = file.write_all(decompressed.as_slice())?;
 
                 let p = Profile::decode(decompressed.as_slice())?;
 
