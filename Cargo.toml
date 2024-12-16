@@ -28,7 +28,8 @@ serde = {version = "1.0.215", features = ["derive"]}
 anyhow = "1.0.93"
 moka = { version = "0.12.8", features = ["sync"] }
 object_store = "0.11.1"
-arrow2 = {version = "0.18.0", features = ["io_print"]}
+arrow2 = { version = "0.18.0", features = ["io_parquet_compression", "io_parquet"] }
+rayon = "1.10.0"
 
 [build-dependencies]
 tonic-build = "0.12.3"
