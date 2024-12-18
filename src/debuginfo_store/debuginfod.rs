@@ -95,29 +95,31 @@ impl DebugInfod {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_debuginfod_get() {
-        let mut debuginfod = DebugInfod::default();
+    #[tokio::test]
+    async fn test_debuginfod_get() {
+        let debuginfod = DebugInfod::default();
         let srv = debuginfod.upstream_servers[0].clone();
 
         // testing for linux's clear exec build id
         let debug_ = debuginfod
             .get(&srv, "252f7dc22ca9d935e8334f04a0232f35359b5880")
+            .await
             .unwrap();
 
         assert_eq!(debug_.is_empty(), false);
     }
 
-    #[test]
-    fn test_debuginfod_exists() {
-        let mut debuginfod = DebugInfod::default();
+    #[tokio::test]
+    async fn test_debuginfod_exists() {
+        let debuginfod = DebugInfod::default();
         // testing for a random buildid
-        assert_eq!(debuginfod.exists("123").is_empty(), true);
+        assert_eq!(debuginfod.exists("123").await.is_empty(), true);
 
         // testing for linux's clear exec build id
         assert_eq!(
             debuginfod
                 .exists("252f7dc22ca9d935e8334f04a0232f35359b5880")
+                .await
                 .is_empty(),
             false,
         );

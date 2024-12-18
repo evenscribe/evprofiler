@@ -6,8 +6,7 @@ use flate2::read::GzDecoder;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::io::Read;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NormalizedWriteRawRequest {

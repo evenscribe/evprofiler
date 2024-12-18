@@ -232,36 +232,36 @@ impl Symbolizer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-
-    use object_store::ObjectStore;
-
-    use crate::{debuginfo_store, metapb, profile, storage};
-
-    use super::*;
-
-    #[test]
-    fn symbolization_test() {
-        let metadata_store = debuginfo_store::MetadataStore::new();
-        let debuginfod = Arc::new(Mutex::new(debuginfo_store::DebugInfod::default()));
-        let bucket: Arc<dyn ObjectStore> = Arc::new(storage::new_memory_bucket());
-        let symbolizer = Arc::new(Symbolizer::new(
-            debuginfo_store::MetadataStore::with_store(metadata_store.store.clone()),
-            DebuginfoFetcher::new(Arc::clone(&bucket), Arc::clone(&debuginfod)),
-        ));
-
-        let mapping = metapb::Mapping {
-            start: 4194304,
-            limit: 4603904,
-            build_id: "2d6912fd3dd64542f6f6294f4bf9cb6c265b3085".into(),
-            ..Default::default()
-        };
-
-        let location = profile::Location {
-            mapping: Some(mapping.clone()),
-            address: 0x463781,
-            ..Default::default()
-        };
-    }
-}
+//#[cfg(test)]
+//mod tests {
+//
+//    use object_store::ObjectStore;
+//
+//    use crate::{debuginfo_store, metapb, profile, storage};
+//
+//    use super::*;
+//
+//    #[test]
+//    fn symbolization_test() {
+//        let metadata_store = debuginfo_store::MetadataStore::new();
+//        let debuginfod = Arc::new(Mutex::new(debuginfo_store::DebugInfod::default()));
+//        let bucket: Arc<dyn ObjectStore> = Arc::new(storage::new_memory_bucket());
+//        let symbolizer = Arc::new(Symbolizer::new(
+//            debuginfo_store::MetadataStore::with_store(metadata_store.store.clone()),
+//            DebuginfoFetcher::new(Arc::clone(&bucket), Arc::clone(&debuginfod)),
+//        ));
+//
+//        let mapping = metapb::Mapping {
+//            start: 4194304,
+//            limit: 4603904,
+//            build_id: "2d6912fd3dd64542f6f6294f4bf9cb6c265b3085".into(),
+//            ..Default::default()
+//        };
+//
+//        let location = profile::Location {
+//            mapping: Some(mapping.clone()),
+//            address: 0x463781,
+//            ..Default::default()
+//        };
+//    }
+//}

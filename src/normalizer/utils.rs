@@ -2,7 +2,7 @@ use super::profile::NormalizedProfile;
 use super::write_raw::NormalizedWriteRawRequest;
 use super::{NormalizedSample, POSSIBLE_METADATA_LABELS};
 use crate::pprofpb::{Function, Location, Mapping, Profile, Sample};
-use crate::profile::{schema, Meta, PprofLocations, ValueType};
+use crate::profile::{Meta, PprofLocations, ValueType};
 use crate::profilestorepb::{ExecutableInfo, WriteRawRequest};
 use anyhow::bail;
 use arrow2::array::{
@@ -10,7 +10,6 @@ use arrow2::array::{
     MutableDictionaryArray, MutableListArray, MutablePrimitiveArray, MutableUtf8Array, TryPush,
 };
 use arrow2::chunk::Chunk;
-use arrow2::datatypes::Schema;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
