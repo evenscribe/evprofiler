@@ -12,6 +12,7 @@ use tonic::{codec::CompressionEncoding, transport::Server};
 
 mod agent_store;
 mod columnquery;
+mod dal;
 mod debuginfo_store;
 mod ingester;
 mod normalizer;
