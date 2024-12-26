@@ -4,8 +4,14 @@ pub mod schema;
 mod utils;
 
 use crate::metapb::{Function, Mapping};
+use datafusion::arrow::array::RecordBatch;
 pub use encode::PprofLocations;
 use serde::{Deserialize, Serialize};
+
+pub struct Profile {
+    meta: Meta,
+    samples: Vec<RecordBatch>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocationLine {

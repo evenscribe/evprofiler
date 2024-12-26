@@ -2,18 +2,18 @@ use arrow2::datatypes::{DataType, Field, IntegerType, Schema};
 
 use crate::normalizer::POSSIBLE_METADATA_LABELS;
 
-const COLUMN_DURATION: &str = "duration";
-const COLUMN_LABELS: &str = "labels";
-const COLUMN_NAME: &str = "name";
-const COLUMN_PERIOD: &str = "period";
-const COLUMN_PERIOD_TYPE: &str = "period_type";
-const COLUMN_PERIOD_UNIT: &str = "period_unit";
-const COLUMN_SAMPLE_TYPE: &str = "sample_type";
-const COLUMN_SAMPLE_UNIT: &str = "sample_unit";
-const COLUMN_STACKTRACE: &str = "stacktrace";
-const COLUMN_STACKTRACE_ITEM: &str = "item";
-const COLUMN_TIMESTAMP: &str = "timestamp";
-const COLUMN_VALUE: &str = "value";
+pub const COLUMN_DURATION: &str = "duration";
+pub const COLUMN_LABELS: &str = "labels";
+pub const COLUMN_NAME: &str = "name";
+pub const COLUMN_PERIOD: &str = "period";
+pub const COLUMN_PERIOD_TYPE: &str = "period_type";
+pub const COLUMN_PERIOD_UNIT: &str = "period_unit";
+pub const COLUMN_SAMPLE_TYPE: &str = "sample_type";
+pub const COLUMN_SAMPLE_UNIT: &str = "sample_unit";
+pub const COLUMN_STACKTRACE: &str = "stacktrace";
+pub const COLUMN_STACKTRACE_ITEM: &str = "item";
+pub const COLUMN_TIMESTAMP: &str = "timestamp";
+pub const COLUMN_VALUE: &str = "value";
 
 pub fn create_schema() -> Schema {
     let mut fields = vec![
