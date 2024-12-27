@@ -22,11 +22,9 @@ impl ColumnQuery {
         &self,
         query_type: ColumnQueryRequest,
         query_string: &str,
+        timestamp: i64,
     ) -> anyhow::Result<ColumnQueryResponse> {
-        let p: profile::Profile = self
-            .dal
-            .select_single(query_string, chrono::Utc::now())
-            .await?;
+        let p: profile::Profile = self.dal.select_single(query_string, timestamp).await?;
         match query_type {
             ColumnQueryRequest::GeneratePprof => self.generate_pprof(p),
         }

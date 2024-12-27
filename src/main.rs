@@ -18,6 +18,7 @@ mod ingester;
 mod normalizer;
 mod profile;
 mod profile_store;
+mod schema_builder;
 mod storage;
 mod symbolizer;
 mod symbols;
