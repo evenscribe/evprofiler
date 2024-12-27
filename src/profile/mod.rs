@@ -1,7 +1,7 @@
 mod encode;
 pub mod executableinfo;
 pub mod schema;
-mod utils;
+pub mod utils;
 
 use crate::metapb::{Function, Mapping};
 use datafusion::arrow::array::RecordBatch;
@@ -9,8 +9,8 @@ pub use encode::PprofLocations;
 use serde::{Deserialize, Serialize};
 
 pub struct Profile {
-    meta: Meta,
-    samples: Vec<RecordBatch>,
+    pub meta: Meta,
+    pub samples: Vec<RecordBatch>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

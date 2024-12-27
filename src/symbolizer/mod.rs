@@ -28,15 +28,15 @@ pub struct Symbolizer {
 }
 
 #[derive(Debug)]
-pub struct SymbolizationRequestMappingAddrs {
+pub struct SymbolizationRequestMappingAddrs<'a> {
     /// This slice is used to store the symbolization result directly.
-    pub locations: Vec<Location>,
+    pub locations: &'a mut [&'a mut Location],
 }
 
 #[derive(Debug)]
-pub struct SymbolizationRequest {
+pub struct SymbolizationRequest<'a> {
     pub build_id: String,
-    pub mappings: Vec<SymbolizationRequestMappingAddrs>,
+    pub mappings: Vec<SymbolizationRequestMappingAddrs<'a>>,
 }
 
 #[derive(Debug)]
@@ -57,7 +57,7 @@ impl Symbolizer {
         }
     }
 
-    pub async fn symbolize(&self, request: &mut SymbolizationRequest) -> anyhow::Result<()> {
+    pub async fn symbolize(&self, request: &mut SymbolizationRequest<'_>) -> anyhow::Result<()> {
         log::info!("Symbolizing request for build_id: {}", request.build_id);
 
         let build_id = &request.build_id;
@@ -89,7 +89,7 @@ impl Symbolizer {
         let ei = ExecutableInfo::try_from(&elf_debug_info.e)?;
 
         for mapping in request.mappings.iter_mut() {
-            for location in mapping.locations.iter_mut() {
+            for location in mapping.locations.into_iter() {
                 let mapping = match &location.mapping {
                     Some(mapping) => mapping,
                     None => bail!("Mapping not found"),

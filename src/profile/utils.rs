@@ -1,4 +1,4 @@
-use crate::{metapb, profile::executableinfo};
+use crate::{metapb, profile::executableinfo, symbolizer};
 use std::{collections::HashMap, sync::Arc};
 
 // #[derive(Debug, Clone, Default)]
@@ -100,7 +100,7 @@ pub struct MappingLocations {
 
 pub async fn symbolize_locations(
     locations: &[Vec<u8>],
-    symbolizer: Arc<crate::symbolizer::Symbolizer>,
+    symbolizer: Arc<symbolizer::Symbolizer>,
 ) -> anyhow::Result<Vec<super::Location>> {
     let mut index_map: HashMap<String, HashMap<executableinfo::Mapping, MappingLocations>> =
         HashMap::new();
@@ -152,7 +152,7 @@ pub async fn symbolize_locations(
 
     // Symbolization phase
     for (build_id, mapping_addr_index) in index_map {
-        let mut sym_req = crate::symbolizer::SymbolizationRequest {
+        let mut sym_req = symbolizer::SymbolizationRequest {
             build_id,
             mappings: Vec::new(),
         };
@@ -163,7 +163,7 @@ pub async fn symbolize_locations(
 
             sym_req
                 .mappings
-                .push(crate::symbolizer::SymbolizationRequestMappingAddrs { locations });
+                .push(symbolizer::SymbolizationRequestMappingAddrs { locations });
         }
 
         // Mutate the request in-place
