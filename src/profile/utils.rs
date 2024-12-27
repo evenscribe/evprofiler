@@ -1,4 +1,5 @@
 use crate::{metapb, profile::executableinfo, symbolizer};
+use datafusion::arrow::array::{Array, FixedSizeBinaryArray};
 use std::{collections::HashMap, sync::Arc};
 
 // #[derive(Debug, Clone, Default)]
@@ -92,24 +93,41 @@ use std::{collections::HashMap, sync::Arc};
 //     Ok(res)
 // }
 
-#[derive(Debug, Clone, Default)]
-pub struct MappingLocations {
+#[derive(Debug, Default)]
+pub struct MappingLocations<'a> {
     mapping: metapb::Mapping,
-    locations: HashMap<u64, super::Location>,
+    locations: HashMap<u64, &'a super::Location>,
 }
 
 pub async fn symbolize_locations(
-    locations: &[Vec<u8>],
+    locations: &FixedSizeBinaryArray,
     symbolizer: Arc<symbolizer::Symbolizer>,
-) -> anyhow::Result<Vec<super::Location>> {
-    let mut index_map: HashMap<String, HashMap<executableinfo::Mapping, MappingLocations>> =
-        HashMap::new();
-    let mut result_locations = Vec::new();
+) -> anyhow::Result<Vec<Option<super::Location>>> {
+    // Pre-allocate result vector
+    let mut result_locations = Vec::with_capacity(locations.len());
 
-    for loc in locations {
-        let decoded_location = crate::profile::PprofLocations::decode(loc)?;
+    // Create a single map to group locations by build_id and mapping
+    let mut symbolization_groups: HashMap<
+        (String, executableinfo::Mapping),
+        (metapb::Mapping, Vec<(usize, super::Location)>),
+    > = HashMap::new();
 
-        // Early continue for invalid locations
+    // First pass: group locations and fill result vector
+    for (idx, loc) in locations.iter().enumerate() {
+        result_locations.push(None);
+
+        if loc.is_none() {
+            continue;
+        }
+
+        let decoded_location = match crate::profile::PprofLocations::decode(loc.unwrap()) {
+            Ok(loc) => loc,
+            Err(e) => {
+                continue;
+            }
+        };
+
+        // Skip invalid locations
         if decoded_location.address == 0
             || decoded_location.build_id.is_empty()
             || decoded_location.number_of_lines > 0
@@ -124,12 +142,10 @@ pub async fn symbolize_locations(
             file: decoded_location.file_name.clone(),
         };
 
-        let mapping_locations = index_map
-            .entry(decoded_location.build_id.clone())
-            .or_default()
-            .entry(mapping)
-            .or_insert_with(|| MappingLocations {
-                mapping: metapb::Mapping {
+        let key = (decoded_location.build_id.clone(), mapping.clone());
+        let group = symbolization_groups.entry(key).or_insert_with(|| {
+            (
+                metapb::Mapping {
                     build_id: decoded_location.build_id.clone(),
                     file: decoded_location.file_name.clone(),
                     start: decoded_location.mapping_memory_start,
@@ -137,41 +153,41 @@ pub async fn symbolize_locations(
                     offset: decoded_location.mapping_file_offset,
                     ..Default::default()
                 },
-                locations: HashMap::new(),
-            });
+                Vec::new(),
+            )
+        });
 
-        mapping_locations
-            .locations
-            .entry(decoded_location.address)
-            .or_insert_with(|| super::Location {
-                address: decoded_location.address,
-                mapping: Some(mapping_locations.mapping.clone()),
-                ..Default::default()
-            });
+        let location = super::Location {
+            address: decoded_location.address,
+            mapping: Some(group.0.clone()),
+            ..Default::default()
+        };
+
+        group.1.push((idx, location));
     }
 
     // Symbolization phase
-    for (build_id, mapping_addr_index) in index_map {
+    for ((build_id, _), (_, locations_with_indices)) in symbolization_groups.iter_mut() {
+        let mut locations: Vec<&mut super::Location> = locations_with_indices
+            .iter_mut()
+            .map(|(_, loc)| loc)
+            .collect();
+
+        // Then create SymbolizationRequestMappingAddrs with a slice from the Vec
         let mut sym_req = symbolizer::SymbolizationRequest {
-            build_id,
-            mappings: Vec::new(),
+            build_id: build_id.clone(),
+            mappings: vec![symbolizer::SymbolizationRequestMappingAddrs {
+                locations: locations.as_mut_slice(),
+            }],
         };
 
-        for (_, mapping_locations) in mapping_addr_index {
-            let locations: Vec<super::Location> =
-                mapping_locations.locations.values().cloned().collect();
-
-            sym_req
-                .mappings
-                .push(symbolizer::SymbolizationRequestMappingAddrs { locations });
-        }
-
-        // Mutate the request in-place
         symbolizer.symbolize(&mut sym_req).await?;
 
-        // Extract symbolized locations from the mutated request
-        for mapping in sym_req.mappings {
-            result_locations.extend(mapping.locations);
+        // Update result_locations directly from the symbolized locations
+        for (idx, loc) in locations_with_indices.iter() {
+            if let Some(result) = result_locations.get_mut(*idx) {
+                *result = Some(loc.clone());
+            }
         }
     }
 
