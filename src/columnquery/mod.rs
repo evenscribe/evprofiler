@@ -1,3 +1,7 @@
+mod pprof_writer;
+
+use pprof_writer::PprofWriter;
+
 use crate::{dal::DataAccessLayer, profile};
 use std::sync::Arc;
 
@@ -31,7 +35,11 @@ impl ColumnQuery {
     }
 
     pub fn generate_pprof(&self, profile: profile::Profile) -> anyhow::Result<ColumnQueryResponse> {
-        unimplemented!()
+        let mut w = PprofWriter::new(profile.meta);
+        for rec in profile.samples {
+            w.write_record(rec)?;
+        }
+        w.finish()
     }
 }
 
