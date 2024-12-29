@@ -1,11 +1,14 @@
-use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema, SchemaBuilder};
+use datafusion::{
+    arrow::datatypes::{DataType, Field, Fields, Schema, SchemaBuilder},
+    parquet::record::Field,
+};
 use std::sync::Arc;
 
 //TODO: Add PprofLocationsArrowSchemaHere
+//
 
-pub fn locations_arrow_schema() -> Schema {
-    let mut builder = SchemaBuilder::new();
-    builder.push(Field::new(
+pub fn locations_field() -> Field {
+    Field::new(
         "locations",
         DataType::List(Arc::new(Field::new(
             "locations_inner",
@@ -64,6 +67,19 @@ pub fn locations_arrow_schema() -> Schema {
             true,
         ))),
         true,
-    ));
-    builder.finish()
+    )
+}
+
+pub fn locations_arrow_schema() -> Schema {
+    let mut sb = SchemaBuilder::new();
+    sb.push(locations_field());
+    sb.finish()
+}
+
+pub fn symbolized_record_schema() -> Schema {
+    let mut sb = SchemaBuilder::new();
+    sb.push(locations_field());
+    sb.push(Field::new("value", DataType::Int64, true));
+    sb.push(Field::new("diff", DataType::Int64, true));
+    sb.finish()
 }

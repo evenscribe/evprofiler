@@ -7,14 +7,15 @@ use crate::{
         },
         utils,
     },
-    schema_builder,
+    schema_builder::{self, symbolized_record_schema},
     symbolizer::Symbolizer,
 };
 use datafusion::{
     arrow::{
         array::{
-            Array, ArrayBuilder, AsArray, BinaryDictionaryBuilder, GenericListBuilder,
-            Int64Builder, ListBuilder, NullArray, RecordBatch, StructBuilder, UInt64Builder,
+            record_batch, Array, ArrayBuilder, AsArray, BinaryDictionaryBuilder,
+            GenericListBuilder, Int64Builder, ListBuilder, NullArray, RecordBatch, StructBuilder,
+            UInt64Builder,
         },
         datatypes::{DataType, Field, Fields, Int32Type, Schema, SchemaBuilder},
     },
@@ -110,7 +111,7 @@ impl DataAccessLayer {
         let (records, value_col, meta) = self.find_single(qs, time).await?;
 
         let symbolized_records: Vec<RecordBatch> =
-            self.symbolize_records(records, value_col, &meta)?;
+            self.symbolize_records(records, value_col, &meta).await?;
 
         let mut total_rows = 0;
         for record in symbolized_records.iter() {
@@ -158,11 +159,11 @@ impl DataAccessLayer {
         &self,
         records: Vec<RecordBatch>,
         value_col: &str,
-        meta: &profile::Meta,
+        _: &profile::Meta,
     ) -> anyhow::Result<Vec<RecordBatch>> {
-        let res = Vec::with_capacity(records.len());
+        let mut res = Vec::with_capacity(records.len());
 
-        for (indx, record) in records.iter().enumerate() {
+        for record in records.iter() {
             let stacktrace_col = Arc::clone(match record.column_by_name(COLUMN_STACKTRACE) {
                 Some(sc) => sc,
                 None => anyhow::bail!("Missing column: {}", COLUMN_STACKTRACE),
@@ -171,8 +172,17 @@ impl DataAccessLayer {
                 Some(sc) => sc,
                 None => anyhow::bail!("Missing column: {}", value_col),
             });
-            let values_per_second = NullArray::new(value_col.len());
+            let values_per_second = Arc::new(NullArray::new(value_col.len()));
             let locations_record = self.resolve_stacks(stacktrace_col).await?;
+
+            let records = vec![
+                Arc::clone(locations_record.column(0)),
+                value_column,
+                values_per_second,
+            ];
+
+            let record_batch = RecordBatch::try_new(Arc::new(symbolized_record_schema()), records)?;
+            res.push(record_batch);
         }
 
         Ok(res)
