@@ -1436,6 +1436,7 @@ dependencies = [
  "arrow2",
  "async-stream",
  "bincode",
+ "byteorder",
  "chrono",
  "colog",
  "cpp_demangle",

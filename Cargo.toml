@@ -31,6 +31,7 @@ object_store = "0.11.1"
 arrow2 = { version = "0.18.0", features = ["io_parquet_compression", "io_parquet"] }
 rayon = "1.10.0"
 datafusion = "43.0.0"
+byteorder = "1.5.0"
 
 [build-dependencies]
 tonic-build = "0.12.3"
