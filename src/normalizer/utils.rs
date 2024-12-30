@@ -325,9 +325,8 @@ fn serialize_pprof_stacktrace(
     Ok(stacktrace)
 }
 
-pub async fn write_raw_request_to_arrow_chunk(
-    request: &WriteRawRequest,
-) -> anyhow::Result<Chunk<Arc<dyn Array>>> {
+type AChunk = Chunk<Arc<dyn Array>>;
+pub async fn write_raw_request_to_arrow_chunk(request: &WriteRawRequest) -> anyhow::Result<AChunk> {
     let normalized_request = NormalizedWriteRawRequest::try_from(request)?;
 
     let mut duration_column = MutablePrimitiveArray::new();
