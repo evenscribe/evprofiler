@@ -1,5 +1,8 @@
 use crate::{metapb, profile::executableinfo, symbolizer};
-use datafusion::arrow::array::{Array, FixedSizeBinaryArray};
+use datafusion::arrow::{
+    array::{Array, FixedSizeBinaryArray, GenericByteArray},
+    datatypes::GenericBinaryType,
+};
 use std::{collections::HashMap, sync::Arc};
 
 // #[derive(Debug, Clone, Default)]
@@ -100,7 +103,7 @@ pub struct MappingLocations<'a> {
 }
 
 pub async fn symbolize_locations(
-    locations: &FixedSizeBinaryArray,
+    locations: &GenericByteArray<GenericBinaryType<i32>>,
     symbolizer: Arc<symbolizer::Symbolizer>,
 ) -> anyhow::Result<Vec<Option<super::Location>>> {
     // Pre-allocate result vector

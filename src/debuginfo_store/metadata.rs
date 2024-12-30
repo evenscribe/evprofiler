@@ -10,6 +10,12 @@ pub struct MetadataStore {
     pub store: Cache<String, Debuginfo>,
 }
 
+impl Default for MetadataStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MetadataStore {
     pub fn new() -> Self {
         Self {

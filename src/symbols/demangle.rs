@@ -8,7 +8,7 @@ use self::metapb::Function;
 /// With mangling the linker can tell the difference between overloaded functions
 /// (they have the same name in the source code but different parameter lists).
 ///
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Demangler {
     force: bool,
 }

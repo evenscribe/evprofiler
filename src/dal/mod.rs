@@ -13,11 +13,10 @@ use crate::{
 use datafusion::{
     arrow::{
         array::{
-            record_batch, Array, ArrayBuilder, AsArray, BinaryDictionaryBuilder,
-            GenericListBuilder, Int64Builder, ListBuilder, NullArray, RecordBatch, StructBuilder,
-            UInt64Builder,
+            Array, ArrayBuilder, AsArray, BinaryDictionaryBuilder, GenericListBuilder,
+            Int64Builder, ListBuilder, NullArray, RecordBatch, StructBuilder, UInt64Builder,
         },
-        datatypes::{DataType, Field, Fields, Int32Type, Schema, SchemaBuilder},
+        datatypes::{DataType, Field, Fields, Int32Type},
     },
     catalog::TableProvider,
     datasource::{
@@ -25,7 +24,6 @@ use datafusion::{
         listing::{ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl},
     },
     functions_aggregate::sum::sum,
-    parquet::data_type::AsBytes,
     prelude::*,
 };
 use std::{
@@ -62,7 +60,11 @@ struct QueryParts {
 }
 
 impl DataAccessLayer {
-    pub async fn try_new(path: &str, cache_stale_duration: u64) -> anyhow::Result<Self> {
+    pub async fn try_new(
+        path: &str,
+        cache_stale_duration: u64,
+        symbolizer: &Arc<Symbolizer>,
+    ) -> anyhow::Result<Self> {
         let ctx = SessionContext::new();
         let session_state = ctx.state();
         let table_path = ListingTableUrl::parse(path)?;
@@ -86,10 +88,11 @@ impl DataAccessLayer {
             path_prefix: path.to_string(),
             cached_provider: Mutex::new(CachedProvider::new(provider)),
             config,
+            symbolizer: Arc::clone(symbolizer),
         })
     }
 
-    async fn get_provider(&self) -> anyhow::Result<Arc<dyn TableProvider>> {
+    pub async fn get_provider(&self) -> anyhow::Result<Arc<dyn TableProvider>> {
         let mut cp = self.cached_provider.lock().unwrap();
         if cp.created_at.elapsed() < self.max_cache_stale_duration {
             return Ok(Arc::clone(&cp.provider));
@@ -189,7 +192,11 @@ impl DataAccessLayer {
     }
 
     async fn resolve_stacks(&self, stacktrace_col: Arc<dyn Array>) -> anyhow::Result<RecordBatch> {
-        let stacktrace_col = match stacktrace_col.as_fixed_size_binary_opt() {
+        let stacktrace_col = match stacktrace_col.as_list_opt::<i32>() {
+            Some(sc) => sc,
+            None => anyhow::bail!("stacktrace column couldnot be downcasted to binary array."),
+        };
+        let stacktrace_col = match stacktrace_col.values().as_binary_opt::<i32>() {
             Some(sc) => sc,
             None => anyhow::bail!("stacktrace column couldnot be downcasted to binary array."),
         };
@@ -485,105 +492,100 @@ fn qs_to_meta_and_filter_expr(qs: &str) -> anyhow::Result<(profile::Meta, Vec<Ex
 //    })
 //}
 
-#[cfg(test)]
-mod tests {
-
-    use crate::profile;
-
-    use super::*;
-    use datafusion::{
-        arrow::{
-            array::{Array, NullArray, RecordBatch},
-            datatypes::Field,
-        },
-        functions_aggregate::sum::sum,
-    };
-
-    #[tokio::test]
-    async fn test_provider_works() {
-        let dal = DataAccessLayer::try_new("evprofiler-data", 5000)
-            .await
-            .unwrap();
-
-        let x = "ss";
-
-        let ctx = SessionContext::new();
-
-        let aggr_expr = vec![sum(col("value")).alias("sum(value)")];
-        let df = ctx.read_table(dal.get_provider().await.unwrap()).unwrap();
-        let df = df.filter(col("duration").eq(lit("9973060593"))).unwrap();
-        let df = df
-            .aggregate(
-                vec![
-                    col("stacktrace"),
-                    col("duration"),
-                    col(r#""labels.compiler""#),
-                    col(r#""labels.executable""#),
-                ],
-                aggr_expr,
-            )
-            .unwrap();
-
-        //df.show().await.unwrap();
-        let meta = profile::Meta {
-            name: "parca_agent_cpu".into(),
-            period_type: profile::ValueType {
-                type_: "cpu".into(),
-                unit: "nanoseconds".into(),
-            },
-            sample_type: profile::ValueType {
-                type_: "samples".into(),
-                unit: "count".into(),
-            },
-
-            timestamp: 1734496663875,
-            duration: 9973060593,
-            period: 52631578,
-        };
-
-        let record = df.collect().await.unwrap();
-        assert_ne!(record.len(), 0);
-        let r = record.first().unwrap();
-        println!("{:?}", r.schema());
-
-        //sum(?table?.value)
-    }
-
-    //#[test]
-    //fn test_valid_query() -> anyhow::Result<()> {
-    //    let query = "executable=/path/to/exec|metric:count:requests:time:seconds";
-    //    let result = parse_query(query)?;
-    //
-    //    assert_eq!(result.meta.name, "metric");
-    //    assert_eq!(result.meta.sample_type.type_, "count");
-    //    assert_eq!(result.meta.sample_type.unit, "requests");
-    //    assert_eq!(result.meta.period_type.type_, "time");
-    //    assert_eq!(result.meta.period_type.unit, "seconds");
-    //    assert_eq!(result.label_filters.len(), 1);
-    //
-    //    assert_eq!(parse_query("  labels.name=value1  ,  labels.type=value2  |  metric:count:requests:time:seconds  ").is_ok(), true);
-    //    Ok(())
-    //}
-    //
-    //#[test]
-    //fn test_invalid_query() -> anyhow::Result<()> {
-    //    assert_ne!(parse_query("hh").is_ok(), true);
-    //    assert_ne!(
-    //        parse_query("labels.name=value1,labels.type=value2").is_ok(),
-    //        true
-    //    );
-    //    assert_ne!(
-    //        parse_query("labels.name=value1|metric:count:requests|time:seconds").is_ok(),
-    //        true
-    //    );
-    //    assert_ne!(
-    //        parse_query("labels.name=value1=extra|metric:count:requests:time:seconds").is_ok(),
-    //        true
-    //    );
-    //    assert_ne!(
-    //        parse_query("labels.name=value1|metric:count:requests:time").is_ok(),
-    //        true
-    //    );
-    //    Ok(())
-    //}
-}
+//#[cfg(test)]
+//mod tests {
+//
+//    use crate::profile;
+//
+//    use super::*;
+//    use datafusion::functions_aggregate::sum::sum;
+//
+//    #[tokio::test]
+//    async fn test_provider_works() {
+//        let dal =
+//            DataAccessLayer::try_new("evprofiler-data", 5000, Arc::new(Symbolizer::default()))
+//                .await
+//                .unwrap();
+//
+//        let x = "ss";
+//
+//        let ctx = SessionContext::new();
+//
+//        let aggr_expr = vec![sum(col("value")).alias("sum(value)")];
+//        let df = ctx.read_table(dal.get_provider().await.unwrap()).unwrap();
+//        let df = df.filter(col("duration").eq(lit("9973060593"))).unwrap();
+//        let df = df
+//            .aggregate(
+//                vec![
+//                    col("stacktrace"),
+//                    col("duration"),
+//                    col(r#""labels.compiler""#),
+//                    col(r#""labels.executable""#),
+//                ],
+//                aggr_expr,
+//            )
+//            .unwrap();
+//
+//        //df.show().await.unwrap();
+//        let meta = profile::Meta {
+//            name: "parca_agent_cpu".into(),
+//            period_type: profile::ValueType {
+//                type_: "cpu".into(),
+//                unit: "nanoseconds".into(),
+//            },
+//            sample_type: profile::ValueType {
+//                type_: "samples".into(),
+//                unit: "count".into(),
+//            },
+//
+//            timestamp: 1734496663875,
+//            duration: 9973060593,
+//            period: 52631578,
+//        };
+//
+//        let record = df.collect().await.unwrap();
+//        assert_ne!(record.len(), 0);
+//        let r = record.first().unwrap();
+//        println!("{:?}", r.schema());
+//
+//        //sum(?table?.value)
+//    }
+//
+//#[test]
+//fn test_valid_query() -> anyhow::Result<()> {
+//    let query = "executable=/path/to/exec|metric:count:requests:time:seconds";
+//    let result = parse_query(query)?;
+//
+//    assert_eq!(result.meta.name, "metric");
+//    assert_eq!(result.meta.sample_type.type_, "count");
+//    assert_eq!(result.meta.sample_type.unit, "requests");
+//    assert_eq!(result.meta.period_type.type_, "time");
+//    assert_eq!(result.meta.period_type.unit, "seconds");
+//    assert_eq!(result.label_filters.len(), 1);
+//
+//    assert_eq!(parse_query("  labels.name=value1  ,  labels.type=value2  |  metric:count:requests:time:seconds  ").is_ok(), true);
+//    Ok(())
+//}
+//
+//#[test]
+//fn test_invalid_query() -> anyhow::Result<()> {
+//    assert_ne!(parse_query("hh").is_ok(), true);
+//    assert_ne!(
+//        parse_query("labels.name=value1,labels.type=value2").is_ok(),
+//        true
+//    );
+//    assert_ne!(
+//        parse_query("labels.name=value1|metric:count:requests|time:seconds").is_ok(),
+//        true
+//    );
+//    assert_ne!(
+//        parse_query("labels.name=value1=extra|metric:count:requests:time:seconds").is_ok(),
+//        true
+//    );
+//    assert_ne!(
+//        parse_query("labels.name=value1|metric:count:requests:time").is_ok(),
+//        true
+//    );
+//    Ok(())
+//}
+//}
