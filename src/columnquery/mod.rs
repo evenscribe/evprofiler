@@ -1,4 +1,5 @@
 mod pprof_writer;
+mod record_reader;
 
 use pprof_writer::PprofWriter;
 
