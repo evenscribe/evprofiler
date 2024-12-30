@@ -1,7 +1,4 @@
-use datafusion::{
-    arrow::datatypes::{DataType, Field, Fields, Schema, SchemaBuilder},
-    parquet::record::Field,
-};
+use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema, SchemaBuilder};
 use std::sync::Arc;
 
 //TODO: Add PprofLocationsArrowSchemaHere
