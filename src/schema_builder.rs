@@ -3,64 +3,60 @@ use std::sync::Arc;
 
 //TODO: Add PprofLocationsArrowSchemaHere
 //
+//
+
+pub fn locations_inner_field() -> Vec<Field> {
+    vec![
+        Field::new("address", DataType::UInt64, true),
+        Field::new("mapping_start", DataType::UInt64, true),
+        Field::new("mapping_limit", DataType::UInt64, true),
+        Field::new("mapping_offset", DataType::UInt64, true),
+        Field::new(
+            "mapping_file",
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Binary)),
+            true,
+        ),
+        Field::new(
+            "mapping_build_id",
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Binary)),
+            true,
+        ),
+        Field::new(
+            "lines",
+            DataType::List(Arc::new(Field::new(
+                "lines_inner",
+                DataType::Struct(Fields::from(vec![
+                    Field::new("line", DataType::Int64, true),
+                    Field::new(
+                        "function_name",
+                        DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Binary)),
+                        true,
+                    ),
+                    Field::new(
+                        "function_system_name",
+                        DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Binary)),
+                        true,
+                    ),
+                    Field::new(
+                        "function_filename",
+                        DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Binary)),
+                        true,
+                    ),
+                    Field::new("function_start_line", DataType::Int64, true),
+                ])),
+                true,
+            ))),
+            true,
+        ),
+    ]
+}
 
 pub fn locations_field() -> Field {
     Field::new(
         "locations",
         DataType::List(Arc::new(Field::new(
-            "locations_inner",
-            DataType::Struct(Fields::from(vec![
-                Field::new("address", DataType::UInt64, true),
-                Field::new("mapping_start", DataType::UInt64, true),
-                Field::new("mapping_limit", DataType::UInt64, true),
-                Field::new("mapping_offset", DataType::UInt64, true),
-                Field::new(
-                    "mapping_file",
-                    DataType::Dictionary(Box::new(DataType::UInt32), Box::new(DataType::Binary)),
-                    true,
-                ),
-                Field::new(
-                    "mapping_build_id",
-                    DataType::Dictionary(Box::new(DataType::UInt32), Box::new(DataType::Binary)),
-                    true,
-                ),
-                Field::new(
-                    "lines",
-                    DataType::List(Arc::new(Field::new(
-                        "lines_inner",
-                        DataType::Struct(Fields::from(vec![
-                            Field::new("line", DataType::Int64, true),
-                            Field::new(
-                                "function_name",
-                                DataType::Dictionary(
-                                    Box::new(DataType::UInt32),
-                                    Box::new(DataType::Binary),
-                                ),
-                                true,
-                            ),
-                            Field::new(
-                                "function_system_name",
-                                DataType::Dictionary(
-                                    Box::new(DataType::UInt32),
-                                    Box::new(DataType::Binary),
-                                ),
-                                true,
-                            ),
-                            Field::new(
-                                "function_filename",
-                                DataType::Dictionary(
-                                    Box::new(DataType::UInt32),
-                                    Box::new(DataType::Binary),
-                                ),
-                                true,
-                            ),
-                            Field::new("function_start_line", DataType::Int64, true),
-                        ])),
-                        true,
-                    ))),
-                    true,
-                ),
-            ])),
+            "item",
+            DataType::Struct(Fields::from(locations_inner_field())),
             true,
         ))),
         true,
