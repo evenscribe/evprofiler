@@ -7,16 +7,16 @@ use crate::{
         },
         utils,
     },
-    schema_builder::{self, symbolized_record_schema},
+    schema_builder::{self, locations_inner_field, symbolized_record_schema},
     symbolizer::Symbolizer,
 };
 use datafusion::{
     arrow::{
         array::{
-            Array, ArrayBuilder, AsArray, BinaryDictionaryBuilder, GenericListBuilder,
-            Int64Builder, ListBuilder, NullArray, RecordBatch, StructBuilder, UInt64Builder,
+            Array, ArrayBuilder, AsArray, BinaryDictionaryBuilder, GenericListBuilder, Int64Array,
+            Int64Builder, ListBuilder, RecordBatch, StructBuilder, UInt64Builder,
         },
-        datatypes::{DataType, Field, Fields, Int32Type},
+        datatypes::Int32Type,
     },
     catalog::TableProvider,
     datasource::{
@@ -94,9 +94,9 @@ impl DataAccessLayer {
 
     pub async fn get_provider(&self) -> anyhow::Result<Arc<dyn TableProvider>> {
         let mut cp = self.cached_provider.lock().unwrap();
-        if cp.created_at.elapsed() < self.max_cache_stale_duration {
-            return Ok(Arc::clone(&cp.provider));
-        }
+        //if cp.created_at.elapsed() < self.max_cache_stale_duration {
+        //    return Ok(Arc::clone(&cp.provider));
+        //}
 
         let cp_ = self.create_cached_provider()?;
         let p = Arc::clone(&cp.provider);
@@ -113,6 +113,7 @@ impl DataAccessLayer {
     pub async fn select_single(&self, qs: &str, time: i64) -> anyhow::Result<profile::Profile> {
         let (records, value_col, meta) = self.find_single(qs, time).await?;
 
+        //println!("Non-Symbolized Records: {:?}", records);
         let symbolized_records: Vec<RecordBatch> =
             self.symbolize_records(records, value_col, &meta).await?;
 
@@ -136,6 +137,24 @@ impl DataAccessLayer {
         qs: &str,
         time: i64,
     ) -> anyhow::Result<(Vec<RecordBatch>, &str, profile::Meta)> {
+        let ctx = SessionContext::new();
+        let session_state = ctx.state();
+        let table_path = ListingTableUrl::parse("evprofiler-data")?;
+
+        let file_format = ParquetFormat::new();
+        let listing_options =
+            ListingOptions::new(Arc::new(file_format)).with_file_extension(".parquet");
+
+        let resolved_schema = listing_options
+            .infer_schema(&session_state, &table_path)
+            .await?;
+
+        let config = ListingTableConfig::new(table_path)
+            .with_listing_options(listing_options)
+            .with_schema(resolved_schema);
+
+        let provider = Arc::new(ListingTable::try_new(config.clone())?);
+
         let (mut meta, mut filter_expr) = qs_to_meta_and_filter_expr(qs)?;
         filter_expr.push(col(COLUMN_TIMESTAMP).eq(lit(time)));
 
@@ -144,11 +163,10 @@ impl DataAccessLayer {
             .reduce(|acc, pred| and(acc, pred))
             .unwrap();
 
-        let ctx = SessionContext::new();
         let value_column = "sum(value)";
         let aggr_expr = vec![sum(col(COLUMN_VALUE)).alias(value_column)];
         let group_expr = vec![col(COLUMN_STACKTRACE)];
-        let df = ctx.read_table(self.get_provider().await?)?;
+        let df = ctx.read_table(provider)?;
         let df = df.filter(filter_expr)?;
         let df = df.aggregate(group_expr, aggr_expr)?;
         let record = df.collect().await?;
@@ -171,11 +189,12 @@ impl DataAccessLayer {
                 Some(sc) => sc,
                 None => anyhow::bail!("Missing column: {}", COLUMN_STACKTRACE),
             });
+
             let value_column = Arc::clone(match record.column_by_name(value_col) {
                 Some(sc) => sc,
                 None => anyhow::bail!("Missing column: {}", value_col),
             });
-            let values_per_second = Arc::new(NullArray::new(value_col.len()));
+            let values_per_second = Arc::new(Int64Array::new_null(value_column.len()));
             let locations_record = self.resolve_stacks(stacktrace_col).await?;
 
             let records = vec![
@@ -184,7 +203,16 @@ impl DataAccessLayer {
                 values_per_second,
             ];
 
-            let record_batch = RecordBatch::try_new(Arc::new(symbolized_record_schema()), records)?;
+            let record_batch =
+                match RecordBatch::try_new(Arc::new(symbolized_record_schema()), records) {
+                    Ok(rb) => rb,
+                    Err(e) => {
+                        anyhow::bail!(
+                            "Failed to create record batch from locations array. Details: {}",
+                            e
+                        )
+                    }
+                };
             res.push(record_batch);
         }
 
@@ -196,13 +224,15 @@ impl DataAccessLayer {
             Some(sc) => sc,
             None => anyhow::bail!("stacktrace column couldnot be downcasted to binary array."),
         };
-        let stacktrace_col = match stacktrace_col.values().as_binary_opt::<i32>() {
+        println!("(before) stacktrace_col: {:?}", stacktrace_col.len());
+        let stacktrace_col_val = match stacktrace_col.values().as_binary_opt::<i32>() {
             Some(sc) => sc,
             None => anyhow::bail!("stacktrace column couldnot be downcasted to binary array."),
         };
+        println!("(after)stacktrace_col: {:?}", stacktrace_col_val.len());
 
         let symbolized_locations =
-            utils::symbolize_locations(stacktrace_col, Arc::clone(&self.symbolizer)).await?;
+            utils::symbolize_locations(stacktrace_col_val, Arc::clone(&self.symbolizer)).await?;
 
         let mut locations_list = locations_array_builder();
         for (indx, stacktrace) in stacktrace_col.iter().enumerate() {
@@ -210,188 +240,172 @@ impl DataAccessLayer {
                 locations_list.append_null();
                 continue;
             }
-            locations_list.append(true);
 
-            let locations: &mut StructBuilder = locations_list.values();
-            locations.append(true);
+            let start = stacktrace_col.offsets()[indx] as usize;
+            let end = stacktrace_col.offsets()[indx + 1] as usize;
 
-            let addresses = locations.field_builder::<UInt64Builder>(0).unwrap();
-            if let Some(symbolized_location) = &symbolized_locations[indx] {
-                addresses.append_value(symbolized_location.address);
+            for j in start..end {
+                let locations: &mut StructBuilder = locations_list.values();
 
-                if let Some(mapping) = &symbolized_location.mapping {
-                    let mapping_build_id = locations
-                        .field_builder::<BinaryDictionaryBuilder<Int32Type>>(5)
-                        .unwrap();
-                    if !mapping.build_id.is_empty() {
-                        mapping_build_id.append_value(mapping.build_id.as_bytes());
-                    } else {
-                        mapping_build_id.append_value("".as_bytes());
-                    }
+                let addresses = locations.field_builder::<UInt64Builder>(0).unwrap();
+                if let Some(symbolized_location) = &symbolized_locations[j] {
+                    //println!("Symbolized Location: {:?}", symbolized_locations[j]);
+                    //println!("Symbolized Location: {:?}", symbolized_location);
+                    addresses.append_value(symbolized_location.address);
 
-                    let mapping_file = locations
-                        .field_builder::<BinaryDictionaryBuilder<Int32Type>>(4)
-                        .unwrap();
-                    if !mapping.file.is_empty() {
-                        mapping_file.append_value(mapping.file.as_bytes());
-                    } else {
-                        mapping_file.append_value("".as_bytes());
-                    }
-
-                    let mapping_start = locations.field_builder::<UInt64Builder>(1).unwrap();
-                    mapping_start.append_value(mapping.start);
-
-                    let mapping_limit = locations.field_builder::<UInt64Builder>(2).unwrap();
-                    mapping_limit.append_value(mapping.limit);
-
-                    let mapping_offset = locations.field_builder::<UInt64Builder>(3).unwrap();
-                    mapping_offset.append_value(mapping.offset);
-                } else {
-                    let mapping_build_id = locations
-                        .field_builder::<BinaryDictionaryBuilder<Int32Type>>(5)
-                        .unwrap();
-                    mapping_build_id.append_value("".as_bytes());
-
-                    let mapping_file = locations
-                        .field_builder::<BinaryDictionaryBuilder<Int32Type>>(4)
-                        .unwrap();
-                    mapping_file.append_value("".as_bytes());
-
-                    let mapping_start = locations.field_builder::<UInt64Builder>(1).unwrap();
-                    mapping_start.append_value(0);
-
-                    let mapping_limit = locations.field_builder::<UInt64Builder>(2).unwrap();
-                    mapping_limit.append_value(0);
-
-                    let mapping_offset = locations.field_builder::<UInt64Builder>(3).unwrap();
-                    mapping_offset.append_value(0);
-                }
-
-                let lines = locations
-                    .field_builder::<ListBuilder<Box<dyn ArrayBuilder>>>(6)
-                    .unwrap();
-                if symbolized_location.lines.len() > 0 {
-                    lines.append(true);
-                    for ln in symbolized_location.lines.iter() {
-                        let line = lines
-                            .values()
-                            .as_any_mut()
-                            .downcast_mut::<StructBuilder>()
+                    if let Some(mapping) = &symbolized_location.mapping {
+                        let mapping_build_id = locations
+                            .field_builder::<BinaryDictionaryBuilder<Int32Type>>(5)
                             .unwrap();
-                        line.append(true);
-
-                        let line_number = line.field_builder::<Int64Builder>(0).unwrap();
-                        line_number.append_value(ln.line);
-
-                        if let Some(func) = &ln.function {
-                            let function_name = line
-                                .field_builder::<BinaryDictionaryBuilder<Int32Type>>(1)
-                                .unwrap();
-                            if !func.name.is_empty() {
-                                function_name.append_value(func.name.as_bytes());
-                            } else {
-                                function_name.append_value("".as_bytes());
-                            }
-
-                            let function_system_name = line
-                                .field_builder::<BinaryDictionaryBuilder<Int32Type>>(2)
-                                .unwrap();
-                            if !func.system_name.is_empty() {
-                                function_system_name.append_value(func.system_name.as_bytes());
-                            } else {
-                                function_system_name.append_value("".as_bytes());
-                            }
-
-                            let function_filename = line
-                                .field_builder::<BinaryDictionaryBuilder<Int32Type>>(3)
-                                .unwrap();
-                            if !func.filename.is_empty() {
-                                function_filename.append_value(func.filename.as_bytes());
-                            } else {
-                                function_filename.append_value("".as_bytes());
-                            }
-
-                            let function_start_line =
-                                line.field_builder::<Int64Builder>(4).unwrap();
-                            function_start_line.append_value(func.start_line);
+                        if !mapping.build_id.is_empty() {
+                            mapping_build_id.append_value(mapping.build_id.as_bytes());
+                        } else {
+                            mapping_build_id.append_value("".as_bytes());
                         }
+
+                        let mapping_file = locations
+                            .field_builder::<BinaryDictionaryBuilder<Int32Type>>(4)
+                            .unwrap();
+                        if !mapping.file.is_empty() {
+                            mapping_file.append_value(mapping.file.as_bytes());
+                        } else {
+                            mapping_file.append_value("".as_bytes());
+                        }
+
+                        let mapping_start = locations.field_builder::<UInt64Builder>(1).unwrap();
+                        mapping_start.append_value(mapping.start);
+
+                        let mapping_limit = locations.field_builder::<UInt64Builder>(2).unwrap();
+                        mapping_limit.append_value(mapping.limit);
+
+                        let mapping_offset = locations.field_builder::<UInt64Builder>(3).unwrap();
+                        mapping_offset.append_value(mapping.offset);
+                    } else {
+                        let mapping_build_id = locations
+                            .field_builder::<BinaryDictionaryBuilder<Int32Type>>(5)
+                            .unwrap();
+                        mapping_build_id.append_value("".as_bytes());
+
+                        let mapping_file = locations
+                            .field_builder::<BinaryDictionaryBuilder<Int32Type>>(4)
+                            .unwrap();
+                        mapping_file.append_value("".as_bytes());
+
+                        let mapping_start = locations.field_builder::<UInt64Builder>(1).unwrap();
+                        mapping_start.append_value(0);
+
+                        let mapping_limit = locations.field_builder::<UInt64Builder>(2).unwrap();
+                        mapping_limit.append_value(0);
+
+                        let mapping_offset = locations.field_builder::<UInt64Builder>(3).unwrap();
+                        mapping_offset.append_value(0);
+                    }
+
+                    let lines = locations
+                        .field_builder::<ListBuilder<Box<dyn ArrayBuilder>>>(6)
+                        .unwrap();
+                    if symbolized_location.lines.len() > 0 {
+                        lines.append(true);
+                        for ln in symbolized_location.lines.iter() {
+                            let line = lines
+                                .values()
+                                .as_any_mut()
+                                .downcast_mut::<StructBuilder>()
+                                .unwrap();
+                            line.append(true);
+
+                            let line_number = line.field_builder::<Int64Builder>(0).unwrap();
+                            line_number.append_value(ln.line);
+
+                            if let Some(func) = &ln.function {
+                                let function_name = line
+                                    .field_builder::<BinaryDictionaryBuilder<Int32Type>>(1)
+                                    .unwrap();
+                                if !func.name.is_empty() {
+                                    function_name.append_value(func.name.as_bytes());
+                                } else {
+                                    function_name.append_value("".as_bytes());
+                                }
+
+                                let function_system_name = line
+                                    .field_builder::<BinaryDictionaryBuilder<Int32Type>>(2)
+                                    .unwrap();
+                                if !func.system_name.is_empty() {
+                                    function_system_name.append_value(func.system_name.as_bytes());
+                                } else {
+                                    function_system_name.append_value("".as_bytes());
+                                }
+
+                                let function_filename = line
+                                    .field_builder::<BinaryDictionaryBuilder<Int32Type>>(3)
+                                    .unwrap();
+                                if !func.filename.is_empty() {
+                                    function_filename.append_value(func.filename.as_bytes());
+                                } else {
+                                    function_filename.append_value("".as_bytes());
+                                }
+
+                                let function_start_line =
+                                    line.field_builder::<Int64Builder>(4).unwrap();
+                                function_start_line.append_value(func.start_line);
+                            } else {
+                                let function_name = line
+                                    .field_builder::<BinaryDictionaryBuilder<Int32Type>>(1)
+                                    .unwrap();
+                                function_name.append_value("".as_bytes());
+
+                                let function_system_name = line
+                                    .field_builder::<BinaryDictionaryBuilder<Int32Type>>(2)
+                                    .unwrap();
+                                function_system_name.append_value("".as_bytes());
+
+                                let function_filename = line
+                                    .field_builder::<BinaryDictionaryBuilder<Int32Type>>(3)
+                                    .unwrap();
+                                function_filename.append_value("".as_bytes());
+
+                                let function_start_line =
+                                    line.field_builder::<Int64Builder>(4).unwrap();
+                                function_start_line.append_value(0);
+                            }
+                        }
+                    } else {
+                        lines.append(false);
                     }
                 } else {
-                    lines.append(false);
-                }
-            } else {
-                addresses.append_value(0);
+                    addresses.append_value(0);
 
-                let lines = locations
-                    .field_builder::<ListBuilder<Box<dyn ArrayBuilder>>>(6)
-                    .unwrap();
-                lines.append_null();
+                    let lines = locations
+                        .field_builder::<ListBuilder<Box<dyn ArrayBuilder>>>(6)
+                        .unwrap();
+                    lines.append_null();
+                }
+                locations.append(true);
             }
+
+            locations_list.append(true);
         }
 
         let locations_array = locations_list.finish();
-        Ok(RecordBatch::try_new(
+
+        let rb = match RecordBatch::try_new(
             Arc::new(schema_builder::locations_arrow_schema()),
             vec![Arc::new(locations_array)],
-        )?)
+        ) {
+            Ok(rb) => rb,
+            Err(e) => {
+                anyhow::bail!(
+                    "Failed to create record batch from locations array. Details: {}",
+                    e
+                )
+            }
+        };
+        Ok(rb)
     }
 }
 
 fn locations_array_builder() -> GenericListBuilder<i32, StructBuilder> {
-    ListBuilder::new(StructBuilder::from_fields(
-        vec![
-            Field::new("address", DataType::UInt64, true),
-            Field::new("mapping_start", DataType::UInt64, true),
-            Field::new("mapping_limit", DataType::UInt64, true),
-            Field::new("mapping_offset", DataType::UInt64, true),
-            Field::new(
-                "mapping_file",
-                DataType::Dictionary(Box::new(DataType::UInt32), Box::new(DataType::Binary)),
-                true,
-            ),
-            Field::new(
-                "mapping_build_id",
-                DataType::Dictionary(Box::new(DataType::UInt32), Box::new(DataType::Binary)),
-                true,
-            ),
-            Field::new(
-                "lines",
-                DataType::List(Arc::new(Field::new_list_field(
-                    DataType::Struct(Fields::from(vec![
-                        Field::new("line", DataType::Int64, true),
-                        Field::new(
-                            "function_name",
-                            DataType::Dictionary(
-                                Box::new(DataType::UInt32),
-                                Box::new(DataType::Binary),
-                            ),
-                            true,
-                        ),
-                        Field::new(
-                            "function_system_name",
-                            DataType::Dictionary(
-                                Box::new(DataType::UInt32),
-                                Box::new(DataType::Binary),
-                            ),
-                            true,
-                        ),
-                        Field::new(
-                            "function_filename",
-                            DataType::Dictionary(
-                                Box::new(DataType::UInt32),
-                                Box::new(DataType::Binary),
-                            ),
-                            true,
-                        ),
-                        Field::new("function_start_line", DataType::Int64, true),
-                    ])),
-                    true,
-                ))),
-                true,
-            ),
-        ],
-        0,
-    ))
+    ListBuilder::new(StructBuilder::from_fields(locations_inner_field(), 0))
 }
 
 fn qs_to_meta_and_filter_expr(qs: &str) -> anyhow::Result<(profile::Meta, Vec<Expr>)> {
