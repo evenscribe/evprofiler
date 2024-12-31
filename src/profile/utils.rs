@@ -184,7 +184,7 @@ pub async fn symbolize_locations(
             }],
         };
 
-        symbolizer.symbolize(&mut sym_req).await?;
+        let _ = symbolizer.symbolize(&mut sym_req).await;
 
         // Update result_locations directly from the symbolized locations
         for (idx, loc) in locations_with_indices.iter() {

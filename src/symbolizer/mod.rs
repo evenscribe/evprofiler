@@ -66,7 +66,10 @@ impl Symbolizer {
             self.metadata
                 .fetch(build_id, &DebuginfoType::DebuginfoUnspecified)
                 .ok_or_else(|| {
-                    Status::not_found(format!("Debuginfo for build_id {} not found", build_id))
+                    Status::not_found(format!(
+                        "Debuginfo Metadata for build_id {} not found",
+                        build_id
+                    ))
                 })?
                 .clone()
         };
