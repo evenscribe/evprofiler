@@ -80,9 +80,9 @@ mod tests {
                 .unwrap(),
         );
         let column_query = ColumnQuery::new(&dal);
-        let qs = "arch=aarch64,node=focal|parca_agent_cpu:samples:count:cpu:nanoseconds";
+        let qs = "arch=aarch64|parca_agent_cpu:samples:count:cpu:nanoseconds";
         let x = column_query
-            .query(ColumnQueryRequest::GeneratePprof, qs, 0)
+            .query(ColumnQueryRequest::GeneratePprof, qs, 1734496813872)
             .await
             .unwrap();
     }
