@@ -168,6 +168,5 @@ mod tests {
         let x = l
             .pc_to_lines(NormalizedAddress(0x0000000000041290))
             .unwrap();
-        println!("{:?}", x);
     }
 }
